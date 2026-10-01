@@ -14,6 +14,9 @@ export const saveFamily = (d) => apiClient.put('/profile/family', d)
 export const uploadDocument = (formData) => apiClient.postForm('/profile/documents', formData)
 export const deleteDocument = (id) => apiClient.del(`/profile/documents/${id}`)
 export const submitDeclaration = (signature) => apiClient.post('/profile/declaration', { signature })
+export const submitChangeRequest = (field, requestedValue, reason) =>
+  apiClient.post('/profile/change-requests', { field, requestedValue, reason })
+export const cancelChangeRequest = (id) => apiClient.del(`/profile/change-requests/${id}`)
 
 /* Compliances */
 export const getCompliances = () => apiClient.get('/compliances')
@@ -36,7 +39,31 @@ export const actOnRequest = (id, action, note) => apiClient.post(`/requests/${id
 
 /* Reference */
 export const getLeaveBalances = () => apiClient.get('/leave-balances')
+export const getHolidays = (year) => apiClient.get('/holidays', { params: { year } })
+export const createHoliday = (name, date) => apiClient.post('/admin/holidays', { name, date })
+export const deleteHoliday = (id) => apiClient.del(`/admin/holidays/${id}`)
 export const getVehicles = () => apiClient.get('/vehicles')
+
+/* Invitations (magic link) */
+export const getInvitation = (token) => apiClient.get(`/invitations/${token}`)
+export const claimInvitation = (token, password) => apiClient.post(`/invitations/${token}/claim`, { password })
+
+/* Access management */
+export const getRoles = () => apiClient.get('/access/roles')
+export const getInvitations = () => apiClient.get('/access/invitations')
+export const sendInvitation = (d) => apiClient.post('/access/invitations', d)
+export const resendInvitation = (id) => apiClient.post(`/access/invitations/${id}/resend`)
+export const revokeInvitation = (id) => apiClient.del(`/access/invitations/${id}`)
+export const getRole = (id) => apiClient.get(`/access/roles/${id}`)
+export const createRole = (d) => apiClient.post('/access/roles', d)
+export const updateRole = (id, d) => apiClient.put(`/access/roles/${id}`, d)
+export const deleteRole = (id) => apiClient.del(`/access/roles/${id}`)
+export const getUsers = (params) => apiClient.get('/access/users', { params })
+export const getUser = (id) => apiClient.get(`/access/users/${id}`)
+export const updateUser = (id, d) => apiClient.put(`/access/users/${id}`, d)
+export const getChangeRequests = (status) => apiClient.get('/access/change-requests', { params: { status } })
+export const reviewChangeRequest = (id, action, note) =>
+  apiClient.post(`/access/change-requests/${id}/review`, { action, note })
 
 /* Admin */
 export const getAdminDashboard = () => apiClient.get('/admin/dashboard')

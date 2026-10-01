@@ -13,6 +13,13 @@ const map = {
   Active: 'approved',
   Verified: 'approved',
   Complete: 'completed',
+  'Pending Invitation': 'pending',
+  Suspended: 'rejected',
+  Inactive: 'neutral',
+  'Pending First Login': 'pending',
+  'Onboarding Incomplete': 'review',
+  Expired: 'neutral',
+  Revoked: 'rejected',
 }
 </script>
 

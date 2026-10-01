@@ -10,7 +10,7 @@ const router = useRouter()
 const form = ref({
   purpose: '', destination: '', startDate: '', endDate: '',
   transport: 'Car', accommodation: '',
-  costs: { transport: 0, accommodation: 0, meals: 0, other: 0 },
+  costs: { transport: '', accommodation: '', meals: '', other: '' },
 })
 const submitting = ref(false)
 
@@ -44,7 +44,7 @@ async function submit() {
       </div>
     </div>
 
-    <section class="card" style="max-width:760px">
+    <section class="card" style="max-width:960px">
       <div class="card-head"><h2>Travel Information</h2></div>
 
       <div class="field"><label>Purpose of Travel <span class="req">*</span></label><textarea v-model="form.purpose" rows="2"></textarea></div>
@@ -59,8 +59,8 @@ async function submit() {
 
       <div class="field">
         <label>Transportation <span class="req">*</span></label>
-        <div style="display:flex; gap:18px; flex-wrap:wrap">
-          <label v-for="t in ['Car','Motorbike','Bus','Airplane','Other']" :key="t" class="checkline" style="margin:0">
+        <div class="radio-pills">
+          <label v-for="t in ['Car','Motorbike','Bus','Airplane','Other']" :key="t" :class="{ on: form.transport === t }">
             <input type="radio" :value="t" v-model="form.transport"> {{ t }}
           </label>
         </div>
@@ -68,19 +68,37 @@ async function submit() {
 
       <div class="card-head" style="margin-top:10px"><h2>Estimated Cost</h2></div>
       <div class="row2">
-        <div class="field"><label>Transport $</label><input v-model="form.costs.transport" type="number" min="0" step="0.01"></div>
-        <div class="field"><label>Accommodation $</label><input v-model="form.costs.accommodation" type="number" min="0" step="0.01"></div>
+        <div class="field">
+          <label>Transport</label>
+          <div class="money-wrap"><span class="cur">$</span><input v-model="form.costs.transport" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        </div>
+        <div class="field">
+          <label>Accommodation</label>
+          <div class="money-wrap"><span class="cur">$</span><input v-model="form.costs.accommodation" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        </div>
       </div>
       <div class="row2">
-        <div class="field"><label>Meals $</label><input v-model="form.costs.meals" type="number" min="0" step="0.01"></div>
-        <div class="field"><label>Other $</label><input v-model="form.costs.other" type="number" min="0" step="0.01"></div>
+        <div class="field">
+          <label>Meals</label>
+          <div class="money-wrap"><span class="cur">$</span><input v-model="form.costs.meals" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        </div>
+        <div class="field">
+          <label>Other</label>
+          <div class="money-wrap"><span class="cur">$</span><input v-model="form.costs.other" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        </div>
       </div>
-      <div style="display:flex; justify-content:space-between; padding:12px 14px; background:var(--primary-soft); border-radius:10px; margin-bottom:14px">
-        <strong>Total</strong><strong>${{ total.toFixed(2) }}</strong>
+      <div class="total-bar">
+        <span>Total Estimated Cost</span>
+        <strong>${{ total.toFixed(2) }}</strong>
       </div>
 
       <div class="actions">
-        <button class="btn primary" :disabled="submitting" @click="submit">Submit Application</button>
+        <span class="help" style="margin-right:auto">Dates and costs are estimates — finance reconciles after the trip.</span>
+        <button class="btn secondary" @click="$router.back()">Cancel</button>
+        <button class="btn primary" :disabled="submitting" @click="submit">
+          <span v-if="submitting">Submitting…</span>
+          <span v-else>✓ Submit Application</span>
+        </button>
       </div>
     </section>
   </div>

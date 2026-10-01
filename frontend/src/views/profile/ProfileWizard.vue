@@ -3,14 +3,17 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import {
   getProfile, savePersonal, saveQualifications, saveFamily,
   uploadDocument, deleteDocument, submitDeclaration,
+  submitChangeRequest, cancelChangeRequest,
 } from '@/services/portalService'
 import { useToastStore } from '@/stores/toast'
+import { useAuthStore } from '@/stores/auth'
 import SignaturePad from '@/components/SignaturePad.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LoadingState from '@/components/LoadingState.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const toast = useToastStore()
+const auth = useAuthStore()
 const step = ref(1)
 const loading = ref(true)
 const saving = ref(false)
@@ -23,6 +26,68 @@ const children = ref([])
 const emergency = ref([{ name: '', relationship: '', phone: '', addr: '' }])
 const documents = ref([])
 const signature = ref(null)
+const lockedFields = ref([])
+const changeRequests = ref([])
+
+const canEditAll = computed(() => auth.isAdmin)
+const isLocked = (field) => !canEditAll.value && lockedFields.value.includes(field)
+
+const pendingByField = computed(() => {
+  const map = {}
+  for (const r of changeRequests.value) {
+    if (r.status === 'Pending') map[r.field] = r
+  }
+  return map
+})
+
+const fieldLabels = {
+  firstName: 'First Name', lastName: 'Last Name', nameKh: 'Name (Khmer)',
+  dob: 'Date of Birth', gender: 'Sex', pob: 'Place of Birth',
+  nationality: 'Nationality', nid: 'ID / Passport Number', marital: 'Marital Status',
+  phone: 'Phone Number', email: 'Email', address: 'Current Address',
+}
+
+/* Change-request modal state */
+const showCrModal = ref(false)
+const crField = ref('')
+const crValue = ref('')
+const crReason = ref('')
+const crSaving = ref(false)
+const crErrors = ref({})
+
+function openCrModal(field) {
+  crField.value = field
+  crValue.value = user[field] ?? ''
+  crReason.value = ''
+  crErrors.value = {}
+  showCrModal.value = true
+}
+
+async function sendCr() {
+  crSaving.value = true
+  crErrors.value = {}
+  try {
+    await submitChangeRequest(crField.value, crValue.value, crReason.value)
+    toast.show('✓ Change request sent to HR for review')
+    showCrModal.value = false
+    await load()
+  } catch (e) {
+    crErrors.value = e.errors ?? {}
+    toast.show(Object.values(e.errors ?? {})[0]?.[0] ?? e.message)
+  } finally {
+    crSaving.value = false
+  }
+}
+
+async function withdrawCr(id) {
+  try {
+    await cancelChangeRequest(id)
+    toast.show('Change request withdrawn')
+    await load()
+  } catch (e) {
+    toast.show(e.message)
+  }
+}
 
 const steps = ['Personal Information', 'Professional Qualifications', 'Family Information', 'Supporting Documents', 'Declaration']
 
@@ -60,6 +125,8 @@ async function load() {
     children.value = d.children ?? []
     emergency.value = d.emergencyContacts?.length ? d.emergencyContacts : [{ name: '', relationship: '', phone: '', addr: '' }]
     documents.value = d.documents ?? []
+    lockedFields.value = d.lockedFields ?? []
+    changeRequests.value = d.changeRequests ?? []
   } finally {
     loading.value = false
   }
@@ -197,47 +264,53 @@ const experience = computed(() => quals.value.filter((q) => q.type === 'experien
         </div>
 
         <div class="row2">
-          <div class="field">
+          <div class="field field-locked">
             <label>First Name (English) <span class="req">*</span></label>
-            <input v-model="user.firstName" :class="{ invalid: errors.firstName }" placeholder="e.g. Borey">
+            <input v-model="user.firstName" :disabled="isLocked('firstName')" :class="{ invalid: errors.firstName }" placeholder="e.g. Borey">
+            <button v-if="isLocked('firstName') && !pendingByField.firstName" class="suggest-btn" @click="openCrModal('firstName')">Request change</button>
+            <span v-else-if="isLocked('firstName')" class="lock-hint">⏳ pending</span>
           </div>
-          <div class="field">
+          <div class="field field-locked">
             <label>Last Name (English) <span class="req">*</span></label>
-            <input v-model="user.lastName" :class="{ invalid: errors.lastName }" placeholder="e.g. Penh">
+            <input v-model="user.lastName" :disabled="isLocked('lastName')" :class="{ invalid: errors.lastName }" placeholder="e.g. Penh">
+            <button v-if="isLocked('lastName') && !pendingByField.lastName" class="suggest-btn" @click="openCrModal('lastName')">Request change</button>
+            <span v-else-if="isLocked('lastName')" class="lock-hint">⏳ pending</span>
           </div>
         </div>
-        <div class="field">
+        <div class="field field-locked">
           <label>Name in Khmer <span style="color:var(--muted); font-weight:400">(ឈ្មោះជាអក្សរខ្មែរ)</span></label>
-          <input v-model="user.nameKh" class="kh" placeholder="សូមបំពេញឈ្មោះជាអក្សរខ្មែរ">
+          <input v-model="user.nameKh" class="kh" :disabled="isLocked('nameKh')" placeholder="សូមបំពេញឈ្មោះជាអក្សរខ្មែរ">
+          <button v-if="isLocked('nameKh') && !pendingByField.nameKh" class="suggest-btn" @click="openCrModal('nameKh')">Request change</button>
+          <span v-else-if="isLocked('nameKh')" class="lock-hint">⏳ pending</span>
         </div>
         <div class="row2">
           <div class="field">
             <label>Sex <span class="req">*</span></label>
-            <select v-model="user.gender"><option v-for="g in genderOptions" :key="g">{{ g }}</option></select>
+            <select v-model="user.gender" :disabled="isLocked('gender')"><option v-for="g in genderOptions" :key="g">{{ g }}</option></select>
           </div>
           <div class="field">
             <label>Date of Birth <span class="req">*</span></label>
-            <input v-model="user.dob" type="date">
+            <input v-model="user.dob" type="date" :disabled="isLocked('dob')">
           </div>
         </div>
         <div class="row2">
           <div class="field">
             <label>Place of Birth <span class="req">*</span></label>
-            <input v-model="user.pob" placeholder="City / Province">
+            <input v-model="user.pob" :disabled="isLocked('pob')" placeholder="City / Province">
           </div>
           <div class="field">
             <label>Nationality <span class="req">*</span></label>
-            <input v-model="user.nationality" placeholder="e.g. Khmer">
+            <input v-model="user.nationality" :disabled="isLocked('nationality')" placeholder="e.g. Khmer">
           </div>
         </div>
         <div class="row2">
           <div class="field">
             <label>ID / Passport Number <span class="req">*</span></label>
-            <input v-model="user.nid">
+            <input v-model="user.nid" :disabled="isLocked('nid')">
           </div>
           <div class="field">
             <label>Marital Status <span class="req">*</span></label>
-            <select v-model="user.marital"><option v-for="m in maritalOptions" :key="m">{{ m }}</option></select>
+            <select v-model="user.marital" :disabled="isLocked('marital')"><option v-for="m in maritalOptions" :key="m">{{ m }}</option></select>
           </div>
         </div>
 
@@ -263,6 +336,9 @@ const experience = computed(() => quals.value.filter((q) => q.type === 'experien
 
         <div class="actions">
           <span class="help" style="margin-right:auto">Step {{ step }} of 5</span>
+          <span v-if="changeRequests.length" class="help" style="margin-right:auto">
+            {{ changeRequests.filter(r => r.status === 'Pending').length }} change request(s) pending with HR
+          </span>
           <button class="btn primary" :disabled="saving" @click="saveStep1">Save &amp; Continue →</button>
         </div>
       </section>
@@ -426,6 +502,31 @@ const experience = computed(() => quals.value.filter((q) => q.type === 'experien
         </div>
       </section>
 
+      <!-- Change requests summary (visible from any step) -->
+      <section v-if="changeRequests.length" class="card" style="margin-top:18px">
+        <div class="sub-head">
+          <span class="sh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" v-html="sIcons.pen"></svg></span>
+          My Change Requests
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Field</th><th>Requested Value</th><th>Reason</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="r in changeRequests" :key="r.id">
+                <td>{{ r.fieldLabel }}</td>
+                <td>{{ r.requestedValue }}</td>
+                <td>{{ r.reason }}</td>
+                <td><StatusBadge :status="r.status" /></td>
+                <td>
+                  <button v-if="r.status === 'Pending'" class="remove-btn" aria-label="Withdraw" @click="withdrawCr(r.id)">✕</button>
+                  <span v-else-if="r.reviewNote" class="help">{{ r.reviewNote }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- STEP 5 -->
       <section v-show="step === 5" class="card">
         <div class="sub-head">
@@ -456,5 +557,35 @@ const experience = computed(() => quals.value.filter((q) => q.type === 'experien
         </div>
       </section>
     </template>
+
+    <!-- Suggest a profile change modal -->
+    <div class="modal-overlay" :class="{ show: showCrModal }">
+      <div class="modal" v-if="showCrModal" style="max-width:480px">
+        <h3>Suggest a Change</h3>
+        <p>
+          <strong>{{ fieldLabels[crField] }}</strong> is managed by HR. Send your suggested
+          value and reason — an administrator will review and apply it if approved.
+        </p>
+
+        <div class="field">
+          <label>Current Value</label>
+          <input :value="user[crField]" disabled>
+        </div>
+        <div class="field">
+          <label>Requested Value <span class="req">*</span></label>
+          <input v-model="crValue" :class="{ invalid: crErrors.requestedValue }">
+        </div>
+        <div class="field">
+          <label>Reason <span class="req">*</span></label>
+          <textarea v-model="crReason" rows="3" :class="{ invalid: crErrors.reason }"
+                    placeholder="Why is this change needed?"></textarea>
+        </div>
+
+        <div class="row">
+          <button class="btn secondary" @click="showCrModal = false">Cancel</button>
+          <button class="btn primary" :disabled="crSaving" @click="sendCr">Send to HR</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

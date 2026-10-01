@@ -11,6 +11,11 @@ const auth = useAuthStore()
 const data = ref(null)
 const loading = ref(true)
 
+function monthName(dueDate) {
+  if (!dueDate) return ''
+  return new Date(dueDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short' })
+}
+
 onMounted(async () => {
   try {
     data.value = await getDashboard()
@@ -35,14 +40,45 @@ const quickActions = [
     <section class="welcome-banner">
       <div>
         <h1>Welcome, {{ auth.fullName }}</h1>
-        <p>Here's an overview of your information and current activities.</p>
+        <p v-if="auth.can('requests.view-team')">Here's your overview — plus staff requests waiting for your review.</p>
+        <p v-else>Here's an overview of your information and current activities.</p>
       </div>
-      <RouterLink to="/profile" class="wb-btn">Complete your profile</RouterLink>
+      <RouterLink v-if="auth.can('requests.view-team')" to="/admin/requests" class="wb-btn">Go to Approval Queue</RouterLink>
+      <RouterLink v-else to="/profile" class="wb-btn">Complete your profile</RouterLink>
     </section>
 
     <LoadingState v-if="loading" variant="card" />
 
     <template v-else-if="data">
+      <!-- Manager / reviewer: requests awaiting approval -->
+      <section
+        v-if="data.pendingApprovalsCount"
+        class="card"
+        style="border-left:4px solid var(--primary); margin-bottom:16px"
+      >
+        <div class="card-head">
+          <h2>⏳ Awaiting Your Approval</h2>
+          <span class="badge pending">{{ data.pendingApprovalsCount }} pending</span>
+          <div class="spacer"></div>
+          <RouterLink class="btn sm primary" to="/admin/requests">Open Approval Queue</RouterLink>
+        </div>
+        <table class="table">
+          <thead><tr><th>#</th><th>Type</th><th>Staff</th><th>Submitted</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr v-for="r in data.pendingApprovals" :key="r.id">
+              <td>{{ r.id }}</td>
+              <td><strong>{{ r.type }}</strong></td>
+              <td>{{ r.staff }}<div class="help">{{ r.staffId }}</div></td>
+              <td>{{ formatDate(r.submittedAt) }}</td>
+              <td><StatusBadge :status="r.status" /></td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="data.pendingApprovalsCount > data.pendingApprovals.length" class="help" style="margin-top:8px">
+          …and {{ data.pendingApprovalsCount - data.pendingApprovals.length }} more in the queue.
+        </div>
+      </section>
+
       <!-- Stats -->
       <div class="grid4">
         <div class="stat-card">
@@ -115,7 +151,7 @@ const quickActions = [
             <div v-for="t in data.upcomingTrainings" :key="t.id" class="feed-row">
               <div class="date-chip">
                 <div class="d">{{ t.dueDate ? t.dueDate.slice(8) : '—' }}</div>
-                <div class="m">{{ t.dueDate ? t.dueDate.slice(5, 7) : '' }}</div>
+                <div class="m">{{ monthName(t.dueDate) }}</div>
               </div>
               <div style="flex:1; min-width:0">
                 <div style="font-weight:600; font-size:13px">{{ t.title }}</div>

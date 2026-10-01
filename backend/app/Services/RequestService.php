@@ -128,6 +128,208 @@ class RequestService
     }
 
     /**
+     * Human-readable detail rows for the request's domain record
+     * (dates, reasons, items, totals…) shown in the detail modal.
+     */
+    public function details(UserRequest $request): array
+    {
+        [$model] = self::DOMAIN[$request->type];
+        $record = $request->related_id ? $model::find($request->related_id) : null;
+        if (! $record) {
+            return [];
+        }
+
+        $out = [];
+        foreach (self::DOMAIN[$request->type][1] as $field) {
+            if ($field === 'user_id') {
+                continue;
+            }
+
+            $value = $record->{$field} ?? null;
+            $out[] = match ($field) {
+                'entries' => $this->tableDetail('Daily Entries', ['Date', 'Day', 'Hours', 'Leave'], $this->entryRows($value)),
+                'items' => $this->tableDetail('Items', ['Item', 'Qty', 'Unit Cost', 'Total'], $this->itemRows($value)),
+                'lines' => $this->tableDetail('Lines', ['Description', 'Amount'], $this->lineRows($value)),
+                'costs' => $this->tableDetail('Cost Breakdown', ['Item', 'Amount'], $this->costRows($value)),
+                'records' => $this->tableDetail('Fuel Records', ['Date', 'Odometer', 'Liters', 'Cost'], $this->fuelRows($value)),
+                'month' => [
+                    'label' => 'Month',
+                    'kind' => 'text',
+                    'value' => \Carbon\Carbon::create()->month((int) $record->month)->translatedFormat('F'),
+                ],
+                default => [
+                    'label' => $this->fieldLabel($field),
+                    'kind' => 'text',
+                    'value' => $this->formatValue($value),
+                ],
+            };
+        }
+
+        return $out;
+    }
+
+    private function tableDetail(string $label, array $columns, array $rows): array
+    {
+        return ['label' => $label, 'kind' => 'table', 'columns' => $columns, 'rows' => $rows];
+    }
+
+    /** Timesheet entries — only days with hours or leave, so the list stays readable. */
+    private function entryRows(?array $entries): array
+    {
+        $rows = [];
+        foreach ($entries ?? [] as $e) {
+            $hours = (float) ($e['hours'] ?? 0);
+            $leave = $e['leave'] ?? null;
+            if ($hours <= 0 && ! $leave) {
+                continue;
+            }
+            $rows[] = [
+                $this->fmtDate($e['date'] ?? ''),
+                $e['day'] ?? '—',
+                $hours > 0 ? number_format($hours, 2) : '—',
+                $leave ?: '—',
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function itemRows(?array $items): array
+    {
+        $rows = [];
+        foreach ($items ?? [] as $i) {
+            $qty = (float) ($i['qty'] ?? 0);
+            $unit = (float) ($i['unitCost'] ?? $i['unit_cost'] ?? 0);
+            $rows[] = [
+                $i['name'] ?? '—',
+                (string) $qty,
+                '$'.number_format($unit, 2),
+                '$'.number_format($qty * $unit, 2),
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function lineRows(?array $lines): array
+    {
+        $rows = [];
+        foreach ($lines ?? [] as $l) {
+            $rows[] = [
+                $l['description'] ?? '—',
+                '$'.number_format((float) ($l['amount'] ?? 0), 2),
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function costRows(?array $costs): array
+    {
+        $rows = [];
+        foreach ($costs ?? [] as $item => $amount) {
+            $rows[] = [\Illuminate\Support\Str::headline((string) $item), '$'.number_format((float) $amount, 2)];
+        }
+
+        return $rows;
+    }
+
+    private function fuelRows(?array $records): array
+    {
+        $rows = [];
+        foreach ($records ?? [] as $r) {
+            $rows[] = [
+                $this->fmtDate($r['date'] ?? ''),
+                (string) ($r['mileage'] ?? '—'),
+                number_format((float) ($r['liters'] ?? 0), 2),
+                '$'.number_format((float) ($r['cost'] ?? 0), 2),
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function fmtDate(?string $date): string
+    {
+        if (! $date) {
+            return '—';
+        }
+
+        try {
+            return now()->parse($date)->format('d/m/Y');
+        } catch (\Throwable) {
+            return (string) $date;
+        }
+    }
+
+    private function fieldLabel(string $field): string
+    {
+        return match ($field) {
+            'type' => 'Type',
+            'start_date' => 'Start Date',
+            'end_date' => 'End Date',
+            'days' => 'Days',
+            'reason' => 'Reason',
+            'justification' => 'Justification',
+            'date' => 'Date',
+            'start_time' => 'Start Time',
+            'end_time' => 'End Time',
+            'hours' => 'Hours',
+            'purpose' => 'Purpose',
+            'destination' => 'Destination',
+            'transport' => 'Transportation',
+            'accommodation' => 'Accommodation',
+            'total_cost' => 'Total Cost',
+            'total' => 'Total',
+            'required_date' => 'Required Date',
+            'department' => 'Department',
+            'items' => 'Items',
+            'costs' => 'Costs',
+            'lines' => 'Lines',
+            'entries' => 'Entries',
+            'records' => 'Records',
+            'total_hours' => 'Total Hours',
+            'total_liters' => 'Total Liters',
+            'total_cost_currency' => 'Total Cost',
+            'month' => 'Month',
+            'year' => 'Year',
+            'voucher_no' => 'Voucher No.',
+            'expense_type' => 'Expense Type',
+            'description' => 'Description',
+            'payment_method' => 'Payment Method',
+            'mileage' => 'Mileage',
+            'liters' => 'Liters',
+            'cost' => 'Cost',
+            'vehicle_id' => 'Vehicle',
+            'supervisor_id' => 'Supervisor',
+            'file_path' => 'Attachment',
+            default => \Illuminate\Support\Str::headline($field),
+        };
+    }
+
+    private function formatValue(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '—';
+        }
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('d/m/Y');
+        }
+        if (is_bool($value)) {
+            return $value ? 'Yes' : 'No';
+        }
+        if (is_array($value)) {
+            return collect($value)
+                ->map(fn ($v) => is_array($v)
+                    ? collect($v)->map(fn ($x, $k) => "{$k}: {$x}")->implode(' · ')
+                    : (string) $v)
+                ->implode("\n");
+        }
+
+        return (string) $value;
+    }
+
+    /**
      * Full workflow trail for one request.
      */
     public function trail(UserRequest $request): array
@@ -141,11 +343,37 @@ class RequestService
         ])->all();
     }
 
+    /**
+     * Count leave days excluding weekends and public holidays.
+     */
+    private function countWorkingDays($start, $end): int
+    {
+        $from = now()->parse($start)->startOfDay();
+        $to = now()->parse($end)->startOfDay();
+        if ($to->lt($from)) {
+            [$from, $to] = [$to, $from];
+        }
+
+        $holidays = \App\Models\Holiday::datesForYear((int) $from->year)
+            + ($to->year !== $from->year ? \App\Models\Holiday::datesForYear((int) $to->year) : []);
+
+        $days = 0;
+        for ($d = $from->copy(); $d->lte($to); $d->addDay()) {
+            $isWeekend = $d->isWeekend();
+            $isHoliday = isset($holidays[$d->toDateString()]);
+            if (! $isWeekend && ! $isHoliday) {
+                $days++;
+            }
+        }
+
+        return max(1, $days);
+    }
+
     private function hydrate(string $type, User $user, array $payload): array
     {
         switch ($type) {
             case 'Leave':
-                $payload['days'] ??= max(1, now()->parse($payload['start_date'])->diffInDays(now()->parse($payload['end_date'])) + 1);
+                $payload['days'] ??= $this->countWorkingDays($payload['start_date'], $payload['end_date']);
                 break;
 
             case 'Overtime':

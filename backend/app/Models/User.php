@@ -12,7 +12,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'staff_id', 'first_name', 'last_name', 'name_kh', 'email', 'password',
-        'role', 'position', 'department_id', 'phone', 'address',
+        'role', 'role_id', 'status', 'position', 'department_id', 'phone', 'address',
         'photo_path', 'signature_path', 'dob', 'gender', 'pob',
         'nationality', 'nid', 'marital',
     ];
@@ -27,6 +27,74 @@ class User extends Authenticatable
     public function department()
     {
         return $this->belongsTo(Department::class);
+    }
+
+    public function roleModel()
+    {
+        return $this->belongsTo(Role::class, 'role_id');
+    }
+
+    public function permissions()
+    {
+        return $this->belongsToMany(Permission::class);
+    }
+
+    public function profileChangeRequests()
+    {
+        return $this->hasMany(ProfileChangeRequest::class);
+    }
+
+    private ?array $resolvedPermissions = null;
+
+    /** All permission names from the role + any additional per-user grants. */
+    public function allPermissions(): array
+    {
+        if ($this->resolvedPermissions !== null) {
+            return $this->resolvedPermissions;
+        }
+
+        $rolePerms = $this->roleModel?->permissions->pluck('name') ?? collect();
+        $extraPerms = $this->relationLoaded('permissions')
+            ? $this->permissions
+            : $this->permissions()->get();
+
+        return $this->resolvedPermissions = $rolePerms
+            ->merge($extraPerms->pluck('name'))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    public function hasPermission(string $permission): bool
+    {
+        return in_array($permission, $this->allPermissions(), true);
+    }
+
+    /** Grant an additional permission on top of the role defaults. */
+    public function grantPermission(string $name): void
+    {
+        $id = Permission::where('name', $name)->value('id');
+        if ($id && ! $this->permissions()->where('permission_id', $id)->exists()) {
+            $this->permissions()->attach($id);
+        }
+    }
+
+    public function revokePermission(string $name): void
+    {
+        $id = Permission::where('name', $name)->value('id');
+        if ($id) {
+            $this->permissions()->detach($id);
+        }
+    }
+
+    public function setStatus(string $status): void
+    {
+        $this->update(['status' => $status]);
+    }
+
+    public function isActive(): bool
+    {
+        return $this->status === 'Active';
     }
 
     public function getFullNameAttribute(): string
@@ -96,6 +164,10 @@ class User extends Authenticatable
 
     public function isAdmin(): bool
     {
+        if ($this->role_id && $this->roleModel) {
+            return $this->roleModel->name === 'Admin';
+        }
+
         return $this->role === 'admin';
     }
 }

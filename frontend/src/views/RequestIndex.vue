@@ -87,6 +87,7 @@ async function open(r) {
     <RequestDetailModal
       v-if="detail"
       :request="detail.request"
+      :details="detail.details"
       :trail="detail.trail"
       :title="`${detail.request.type} Request #${detail.request.id}`"
       @close="detail = null"

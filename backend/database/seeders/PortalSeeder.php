@@ -7,6 +7,8 @@ use App\Models\Compliance;
 use App\Models\Contract;
 use App\Models\Department;
 use App\Models\LeaveBalance;
+use App\Models\ProfileChangeRequest;
+use App\Models\Role;
 use App\Models\Training;
 use App\Models\TrainingAssignment;
 use App\Models\User;
@@ -17,42 +19,80 @@ class PortalSeeder extends Seeder
 {
     public function run(): void
     {
-        $program = Department::create(['name' => 'Program']);
-        Department::create(['name' => 'Finance']);
-        Department::create(['name' => 'HR']);
-        Department::create(['name' => 'Operations']);
+        // Idempotent — re-running the seeder must not duplicate anything.
+        $program = Department::firstOrCreate(['name' => 'Program']);
+        Department::firstOrCreate(['name' => 'Finance']);
+        Department::firstOrCreate(['name' => 'HR']);
+        Department::firstOrCreate(['name' => 'Operations']);
 
-        /* ---- Users ---- */
-        $admin = User::create([
-            'staff_id' => 'HR-0001',
-            'first_name' => 'Sokha',
-            'last_name' => 'Chan',
-            'email' => 'admin@portal.test',
-            'password' => Hash::make('password'),
-            'role' => 'admin',
-            'position' => 'HR Manager',
-            'department_id' => $program->id,
-        ]);
+        $adminRole = Role::where('name', 'Admin')->first();
+        $staffRole = Role::where('name', 'Staff')->first();
+        $managerRole = Role::where('name', 'Manager')->first();
 
-        $staff = User::create([
-            'staff_id' => 'ST-00123',
-            'first_name' => 'Borey',
-            'last_name' => 'Penh',
-            'name_kh' => 'បុរេយ ភេន',
-            'email' => 'staff@portal.test',
-            'password' => Hash::make('password'),
-            'role' => 'staff',
-            'position' => 'Program Officer',
-            'department_id' => $program->id,
-            'phone' => '+855 12 849 201',
-            'address' => '#42B, St. 310, Phnom Penh',
-            'dob' => '1992-08-15',
-            'gender' => 'Male',
-            'pob' => 'Battambang Province, Cambodia',
-            'nationality' => 'Khmer',
-            'nid' => '010892415',
-            'marital' => 'Married',
-        ]);
+        /* ---- Demo users (per-user idempotent) ---- */
+        $admin = User::firstOrCreate(
+            ['email' => 'admin@portal.test'],
+            [
+                'staff_id' => 'HR-0001',
+                'first_name' => 'Sokha',
+                'last_name' => 'Chan',
+                'password' => Hash::make('password'),
+                'role' => 'admin',
+                'role_id' => $adminRole?->id,
+                'status' => 'Active',
+                'position' => 'HR Manager',
+                'department_id' => $program->id,
+            ]
+        );
+
+        $staff = User::firstOrCreate(
+            ['email' => 'staff@portal.test'],
+            [
+                'staff_id' => 'ST-00123',
+                'first_name' => 'Borey',
+                'last_name' => 'Penh',
+                'name_kh' => 'បុរេយ ភេន',
+                'password' => Hash::make('password'),
+                'role' => 'staff',
+                'role_id' => $staffRole?->id,
+                'status' => 'Active',
+                'position' => 'Program Officer',
+                'department_id' => $program->id,
+                'phone' => '+855 12 849 201',
+                'address' => '#42B, St. 310, Phnom Penh',
+                'dob' => '1992-08-15',
+                'gender' => 'Male',
+                'pob' => 'Battambang Province, Cambodia',
+                'nationality' => 'Khmer',
+                'nid' => '010892415',
+                'marital' => 'Married',
+            ]
+        );
+
+        $manager = User::firstOrCreate(
+            ['email' => 'manager@portal.test'],
+            [
+                'staff_id' => 'MG-0001',
+                'first_name' => 'Dara',
+                'last_name' => 'Kim',
+                'password' => Hash::make('password'),
+                'role' => 'staff',
+                'role_id' => $managerRole?->id,
+                'status' => 'Active',
+                'position' => 'Program Manager',
+                'department_id' => $program->id,
+            ]
+        );
+
+        // Staff demo gets an additional permission on top of role defaults.
+        $staff->grantPermission('profile.change-requests.review');
+
+        /* ---- Domain demo data — seed only once ---- */
+        if (Compliance::exists()) {
+            $this->command?->warn('PortalSeeder: demo data already present — users ensured, data skipped.');
+
+            return;
+        }
 
         Child::create(['user_id' => $staff->id, 'name' => 'Dara Penh', 'dob' => '2020-03-02', 'gender' => 'Male']);
         Child::create(['user_id' => $staff->id, 'name' => 'Srey Penh', 'dob' => '2023-11-20', 'gender' => 'Female']);
@@ -140,5 +180,15 @@ class PortalSeeder extends Seeder
         /* ---- Reference vehicle ---- */
         \App\Models\Vehicle::create(['name' => 'Car-001']);
         \App\Models\Vehicle::create(['name' => 'Motorbike-001']);
+
+        // A pending change request so the admin queue has an example.
+        ProfileChangeRequest::create([
+            'user_id' => $staff->id,
+            'field' => 'nid',
+            'current_value' => $staff->nid,
+            'requested_value' => '010892416',
+            'reason' => 'Received my renewed national ID; the number on file was mistyped.',
+            'status' => 'Pending',
+        ]);
     }
 }

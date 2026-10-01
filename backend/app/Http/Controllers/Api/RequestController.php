@@ -18,8 +18,9 @@ class RequestController extends Controller
     {
         $q = UserRequest::with('user')->orderByDesc('submitted_at');
 
-        if (! $request->user()->isAdmin()) {
-            $q->where('user_id', $request->user()->id);
+        $user = $request->user();
+        if (! $user->isAdmin() && ! $user->hasPermission('requests.view-team')) {
+            $q->where('user_id', $user->id);
         }
 
         if ($type = $request->query('type')) {
@@ -64,21 +65,21 @@ class RequestController extends Controller
     {
         $r = UserRequest::with('user')->findOrFail($id);
 
-        if (! $request->user()->isAdmin() && $r->user_id !== $request->user()->id) {
+        $user = $request->user();
+        if (! $user->isAdmin() && ! $user->hasPermission('requests.view-team') && $r->user_id !== $user->id) {
             return response()->json(['message' => 'Forbidden.'], 403);
-        }
-
-        return response()->json([
-            'request' => [
-                'id' => $r->id,
-                'type' => $r->type,
-                'status' => $r->status,
-                'submittedAt' => $r->submitted_at?->toISOString(),
-                'staff' => $r->user?->full_name,
-                'staffId' => $r->user?->staff_id,
-            ],
-            'trail' => $this->service->trail($r),
-        ]);
+        }            return response()->json([
+                'request' => [
+                    'id' => $r->id,
+                    'type' => $r->type,
+                    'status' => $r->status,
+                    'submittedAt' => $r->submitted_at?->toISOString(),
+                    'staff' => $r->user?->full_name,
+                    'staffId' => $r->user?->staff_id,
+                ],
+                'details' => $this->service->details($r),
+                'trail' => $this->service->trail($r),
+            ]);
     }
 
     /** Supervisor/HR/Finance workflow actions. */
@@ -86,8 +87,8 @@ class RequestController extends Controller
     {
         $actor = auth('sanctum')->user() ?? $request->user();
 
-        if (! $actor?->isAdmin()) {
-            return response()->json(['message' => 'Only HR/Admin can process requests.'], 403);
+        if (! $actor?->isAdmin() && ! $actor?->hasPermission('requests.approve')) {
+            return response()->json(['message' => 'You do not have permission to process requests.'], 403);
         }
 
         $data = $request->validate([

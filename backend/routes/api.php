@@ -1,16 +1,23 @@
 <?php
 
+use App\Http\Controllers\Api\AccessController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ComplianceController;
 use App\Http\Controllers\Api\ContractController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\HolidayController;
+use App\Http\Controllers\Api\InvitationController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\RequestController;
 use App\Http\Controllers\Api\TrainingController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
+
+// Invitation magic-link (public — token is the credential)
+Route::get('/invitations/{token}', [InvitationController::class, 'show']);
+Route::post('/invitations/{token}/claim', [InvitationController::class, 'claim']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
@@ -26,6 +33,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/profile/documents', [ProfileController::class, 'uploadDocument']);
     Route::delete('/profile/documents/{id}', [ProfileController::class, 'deleteDocument']);
     Route::post('/profile/declaration', [ProfileController::class, 'declare']);
+    Route::post('/profile/change-requests', [ProfileController::class, 'submitChangeRequest']);
+    Route::delete('/profile/change-requests/{id}', [ProfileController::class, 'cancelChangeRequest']);
 
     // Compliances
     Route::get('/compliances', [ComplianceController::class, 'index']);
@@ -47,6 +56,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/requests/{id}/act', [RequestController::class, 'act']);
 
     // Misc reference data
+    Route::get('/holidays', [HolidayController::class, 'index']);
     Route::get('/leave-balances', fn (\Illuminate\Http\Request $request) => response()->json([
         'data' => $request->user()->leaveBalances()->get()->map(fn ($b) => [
             'type' => $b->type,
@@ -58,6 +68,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/vehicles', fn () => response()->json([
         'data' => \App\Models\Vehicle::orderBy('name')->get(['id', 'name']),
     ]));
+
+    // Access Management (roles, users, change requests)
+    Route::get('/access/roles', [AccessController::class, 'roles'])->middleware('can:users.manage');
+    Route::get('/access/roles/{role}', [AccessController::class, 'roleShow'])->middleware('can:users.manage');
+    Route::post('/access/roles', [AccessController::class, 'roleStore'])->middleware('can:roles.manage');
+    Route::put('/access/roles/{role}', [AccessController::class, 'roleUpdate'])->middleware('can:roles.manage');
+    Route::delete('/access/roles/{role}', [AccessController::class, 'roleDestroy'])->middleware('can:roles.manage');
+    Route::get('/access/users', [AccessController::class, 'users'])->middleware('can:users.manage');
+    Route::get('/access/users/{user}', [AccessController::class, 'userShow'])->middleware('can:users.manage');
+    Route::put('/access/users/{user}', [AccessController::class, 'userUpdate'])->middleware('can:users.manage');
+    Route::get('/access/change-requests', [AccessController::class, 'changeRequestIndex'])->middleware('can:profile.change-requests.review');
+    Route::post('/access/change-requests/{id}/review', [AccessController::class, 'changeRequestReview'])->middleware('can:profile.change-requests.review');
+    Route::get('/access/invitations', [InvitationController::class, 'index'])->middleware('can:users.manage');
+    Route::post('/access/invitations', [InvitationController::class, 'store'])->middleware('can:users.manage');
+    Route::post('/access/invitations/{id}/resend', [InvitationController::class, 'resend'])->middleware('can:users.manage');
+    Route::delete('/access/invitations/{id}', [InvitationController::class, 'revoke'])->middleware('can:users.manage');
 
     // Admin / HR portal
     Route::middleware('admin')->group(function () {
@@ -77,6 +103,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/contracts', [AdminController::class, 'contractStore']);
         Route::get('/admin/vouchers', [AdminController::class, 'voucherIndex']);
         Route::post('/admin/vouchers/{id}/pay', [AdminController::class, 'voucherPay']);
+        Route::post('/admin/holidays', [HolidayController::class, 'store']);
+        Route::delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
         Route::get('/admin/reports', [AdminController::class, 'reports']);
     });
 });

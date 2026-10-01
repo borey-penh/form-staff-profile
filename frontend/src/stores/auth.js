@@ -10,6 +10,13 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = computed(() => !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
   const fullName = computed(() => user.value?.fullName ?? '')
+  const permissions = computed(() => user.value?.permissions ?? [])
+
+  /** Permission check: admins pass everything, others need an explicit grant. */
+  function can(permission) {
+    if (isAdmin.value) return true
+    return permissions.value.includes(permission)
+  }
 
   async function bootstrap() {
     if (!getToken()) return
@@ -42,5 +49,5 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  return { user, loading, isLoggedIn, isAdmin, fullName, bootstrap, login, logout }
+  return { user, loading, isLoggedIn, isAdmin, fullName, permissions, can, bootstrap, login, logout }
 })

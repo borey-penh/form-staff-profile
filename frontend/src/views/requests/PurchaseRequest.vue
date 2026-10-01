@@ -46,7 +46,7 @@ async function submit() {
       </div>
     </div>
 
-    <section class="card" style="max-width:820px">
+    <section class="card" style="max-width:960px">
       <div class="card-head"><h2>Request Information</h2></div>
       <div class="field"><label>Purpose <span class="req">*</span></label><textarea v-model="form.purpose" rows="2"></textarea></div>
       <div class="row2">
@@ -71,14 +71,20 @@ async function submit() {
       </div>
       <button class="add-btn" style="margin:12px 0" @click="items.push({ name: '', qty: 1, unitCost: 0 })">+ Add Item</button>
 
-      <div style="display:flex; justify-content:flex-end; padding:12px 14px; background:var(--primary-soft); border-radius:10px; gap:18px">
-        <strong>Total Amount: ${{ total.toFixed(2) }}</strong>
+      <div class="total-bar">
+        <span>Total Amount</span>
+        <strong>${{ total.toFixed(2) }}</strong>
       </div>
 
       <div class="field" style="margin-top:14px"><label>Justification</label><textarea v-model="form.justification" rows="2"></textarea></div>
 
       <div class="actions">
-        <button class="btn primary" :disabled="submitting" @click="submit">Submit Request</button>
+        <span class="help" style="margin-right:auto">The P.R. number is assigned by finance after review.</span>
+        <button class="btn secondary" @click="$router.back()">Cancel</button>
+        <button class="btn primary" :disabled="submitting" @click="submit">
+          <span v-if="submitting">Submitting…</span>
+          <span v-else>✓ Submit Request</span>
+        </button>
       </div>
     </section>
   </div>

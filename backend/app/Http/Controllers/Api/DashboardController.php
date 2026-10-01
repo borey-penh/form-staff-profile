@@ -34,7 +34,7 @@ class DashboardController extends Controller
         // Active contract
         $contract = Contract::where('user_id', $user->id)->where('status', 'Active')->orderByDesc('start_date')->first();
 
-        // Pending + recent requests
+        // Pending + recent requests (the user's own)
         $pending = UserRequest::with('user')
             ->where('user_id', $user->id)
             ->whereIn('status', ['Pending', 'In Review'])
@@ -47,6 +47,24 @@ class DashboardController extends Controller
                 'status' => $r->status,
                 'submittedAt' => $r->submitted_at?->toISOString(),
             ]);
+
+        // Requests awaiting review — only for users allowed to see the team queue
+        $pendingApprovals = collect();
+        $pendingApprovalsCount = 0;
+        if ($user->hasPermission('requests.view-team')) {
+            $queue = UserRequest::with('user')
+                ->whereIn('status', ['Pending', 'In Review'])
+                ->orderByDesc('submitted_at');
+            $pendingApprovalsCount = (clone $queue)->count();
+            $pendingApprovals = $queue->limit(6)->get()->map(fn ($r) => [
+                'id' => $r->id,
+                'type' => $r->type,
+                'status' => $r->status,
+                'staff' => $r->user?->full_name,
+                'staffId' => $r->user?->staff_id,
+                'submittedAt' => $r->submitted_at?->toISOString(),
+            ]);
+        }
 
         // Upcoming trainings (incomplete, by due date)
         $upcoming = TrainingAssignment::with('training')
@@ -90,6 +108,8 @@ class DashboardController extends Controller
                 ] : null,
             ],
             'pendingRequests' => $pending,
+            'pendingApprovals' => $pendingApprovals,
+            'pendingApprovalsCount' => $pendingApprovalsCount,
             'upcomingTrainings' => $upcoming,
             'leaveBalances' => $balances,
             'activities' => $activities,

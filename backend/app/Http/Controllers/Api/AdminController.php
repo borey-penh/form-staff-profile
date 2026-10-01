@@ -49,7 +49,7 @@ class AdminController extends Controller
 
     public function staffIndex(Request $request): JsonResponse
     {
-        $q = User::with('department')->orderBy('staff_id');
+        $q = User::with(['department', 'roleModel.permissions', 'permissions'])->orderBy('staff_id');
 
         if ($search = $request->query('search')) {
             $q->where(fn ($w) => $w

@@ -24,6 +24,8 @@ const icons = {
   menu: '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
   chevDown: '<path d="m6 9 6 6 6-6"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
 }
 
 const router = useRouter()
@@ -35,6 +37,7 @@ const sidebarOpen = ref(false)
 const showNotif = ref(false)
 const showUser = ref(false)
 const notifItems = ref([])
+const approvalItems = ref([])
 
 const sections = computed(() => {
   const base = [
@@ -69,17 +72,30 @@ const sections = computed(() => {
     base.push(
       { label: 'Admin Dashboard', icon: 'chart', to: '/admin' },
       {
+        label: 'Access Management', icon: 'lock', children: [
+          { label: 'Roles & Permissions', to: '/access/roles' },
+          { label: 'Users', to: '/access/users' },
+          { label: 'Profile Change Requests', to: '/access/change-requests' },
+        ],
+      },
+      {
         label: 'Admin Portal', icon: 'gear', children: [
           { label: 'Staff Management', to: '/admin/staff' },
           { label: 'Compliance Manager', to: '/admin/compliances' },
           { label: 'Training Manager', to: '/admin/trainings' },
-          { label: 'Approval Queue', to: '/admin/requests' },
           { label: 'Finance / Vouchers', to: '/admin/vouchers' },
+          { label: 'Holiday Calendar', to: '/admin/holidays' },
           { label: 'Reports', to: '/admin/reports' },
         ],
       }
     )
   }
+
+  // Reviewers (admins + managers) see the queue with a pending badge
+  if (auth.can('requests.view-team')) {
+    base.push({ label: 'Approval Queue', icon: 'check', to: '/admin/requests' })
+  }
+
   return base
 })
 
@@ -99,7 +115,7 @@ const pageTitle = computed(() => {
   return partial?.label ?? 'Personnel Portal'
 })
 
-const pendingCount = computed(() => notifItems.value.length)
+const pendingCount = computed(() => approvalItems.value.length + notifItems.value.length)
 
 const initials = computed(() =>
   (auth.user?.firstName?.[0] ?? '') + (auth.user?.lastName?.[0] ?? '')
@@ -141,6 +157,7 @@ onMounted(async () => {
   try {
     const d = await getDashboard()
     notifItems.value = (d.pendingRequests ?? []).slice(0, 5)
+    approvalItems.value = (d.pendingApprovals ?? []).slice(0, 5)
   } catch {
     /* notifications are best-effort */
   }
@@ -177,6 +194,7 @@ async function doLogout() {
           :class="{ active: isActive(item) }"
         >
           <span class="nav-chip"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" v-html="icons[item.icon]"></svg></span> {{ item.label }}
+          <span v-if="item.to === '/admin/requests' && approvalItems.length" class="badge pending" style="margin-left:auto">{{ approvalItems.length }}</span>
         </RouterLink>
 
         <template v-else>
@@ -219,15 +237,31 @@ async function doLogout() {
           <span v-if="pendingCount" class="dot"></span>
           <div v-if="showNotif" class="panel" @click.stop>
             <div class="p-head">Notifications</div>
+
+            <template v-if="approvalItems.length">
+              <div class="p-item" style="font-weight:700; color:var(--primary); font-size:11px; text-transform:uppercase; letter-spacing:.05em">Awaiting your approval</div>
+              <RouterLink v-for="n in approvalItems" :key="'a' + n.id" class="p-item" to="/admin/requests" style="color:inherit; text-decoration:none">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none; margin-top:1px; color:var(--amber, #b45309)" v-html="icons.check"></svg>
+                <span style="flex:1"><strong>{{ n.type }}</strong> from {{ n.staff }}<br><span class="help">{{ n.status }}</span></span>
+              </RouterLink>
+            </template>
+
             <template v-if="notifItems.length">
+              <div class="p-item" style="font-weight:700; color:var(--primary); font-size:11px; text-transform:uppercase; letter-spacing:.05em">My requests</div>
               <RouterLink v-for="n in notifItems" :key="n.id" class="p-item" to="/requests" style="color:inherit; text-decoration:none">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:none; margin-top:1px; color:var(--primary)" v-html="icons.calendar"></svg>
                 <span style="flex:1">{{ n.type }} request is <strong>{{ n.status }}</strong></span>
                 <span class="when">{{ n.submittedAt ? new Date(n.submittedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '' }}</span>
               </RouterLink>
+            </template>
+
+            <template v-if="approvalItems.length">
+              <RouterLink to="/admin/requests" class="p-foot">Open approval queue</RouterLink>
+            </template>
+            <template v-else-if="notifItems.length">
               <RouterLink to="/requests" class="p-foot">View all requests</RouterLink>
             </template>
-            <div v-else class="p-empty">You're all caught up 🎉</div>
+            <div v-if="!approvalItems.length && !notifItems.length" class="p-empty">You're all caught up 🎉</div>
           </div>
         </div>
 

@@ -27,6 +27,24 @@ class AuthController extends Controller
             ]);
         }
 
+        if ($user->status === 'Pending Invitation') {
+            throw ValidationException::withMessages([
+                'email' => ['Your invitation has not been accepted yet. Check your email for the invitation link.'],
+            ]);
+        }
+
+        if ($user->status === 'Suspended') {
+            throw ValidationException::withMessages([
+                'email' => ['Your account has been suspended. Contact HR for assistance.'],
+            ]);
+        }
+
+        if ($user->status === 'Inactive') {
+            throw ValidationException::withMessages([
+                'email' => ['This account is inactive. Contact HR for assistance.'],
+            ]);
+        }
+
         $token = $user->createToken('portal')->plainTextToken;
 
         return response()->json([

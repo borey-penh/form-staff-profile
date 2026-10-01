@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
 use App\Models\Child;
 use App\Models\EmergencyContact;
+use App\Models\ProfileChangeRequest;
 use App\Models\Qualification;
 use App\Models\Spouse;
 use Illuminate\Http\JsonResponse;
@@ -14,10 +15,21 @@ use Illuminate\Support\Facades\Storage;
 
 class ProfileController extends Controller
 {
+    /**
+     * Identity fields staff cannot edit directly — they must send a
+     * change request to HR/Admin instead. Contact fields stay editable.
+     */
+    public const LOCKED_FIELDS = [
+        'firstName', 'lastName', 'nameKh', 'dob', 'gender',
+        'pob', 'nationality', 'nid', 'marital',
+    ];
+
     /** Full profile payload for the wizard. */
     public function show(Request $request): JsonResponse
     {
         $user = $request->user()->load(['qualifications', 'children', 'emergencyContacts', 'spouse', 'documents']);
+
+        $changes = $user->profileChangeRequests()->orderByDesc('created_at')->limit(30)->get();
 
         return response()->json([
             'user' => new UserResource($user),
@@ -42,6 +54,18 @@ class ProfileController extends Controller
                 'addr' => $e->addr,
             ]),
             'documents' => $user->documents->map(fn ($d) => $this->serializeDocument($d)),
+            'lockedFields' => self::LOCKED_FIELDS,
+            'changeRequests' => $changes->map(fn (ProfileChangeRequest $r) => [
+                'id' => $r->id,
+                'field' => $r->field,
+                'fieldLabel' => $this->fieldLabel($r->field),
+                'currentValue' => $r->current_value,
+                'requestedValue' => $r->requested_value,
+                'reason' => $r->reason,
+                'status' => $r->status,
+                'reviewNote' => $r->review_note,
+                'submittedAt' => $r->created_at?->toISOString(),
+            ]),
         ]);
     }
 
@@ -72,12 +96,91 @@ class ProfileController extends Controller
 
         $payload = [];
         foreach ($map as $camel => $snake) {
+            if (in_array($camel, self::LOCKED_FIELDS, true)) {
+                continue; // locked — only HR/Admin can change these
+            }
             $payload[$snake] = $data[$camel];
         }
 
         $request->user()->update($payload);
 
         return new UserResource($request->user()->fresh());
+    }
+
+    /** Staff suggests an edit to a locked field; HR/Admin reviews it. */
+    public function submitChangeRequest(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'field' => ['required', 'string', 'in:'.implode(',', self::LOCKED_FIELDS)],
+            'requestedValue' => ['required', 'string', 'max:1000'],
+            'reason' => ['required', 'string', 'max:1000'],
+        ]);
+
+        $user = $request->user();
+
+        $pending = $user->profileChangeRequests()
+            ->where('field', $data['field'])
+            ->where('status', 'Pending')
+            ->exists();
+
+        if ($pending) {
+            return response()->json([
+                'message' => 'You already have a pending change request for this field.',
+            ], 422);
+        }
+
+        $column = \Illuminate\Support\Str::snake($data['field']);
+        $current = (string) ($user->{$column} ?? '');
+
+        if ($current === $data['requestedValue']) {
+            return response()->json(['message' => 'The requested value is the same as the current one.'], 422);
+        }
+
+        $change = ProfileChangeRequest::create([
+            'user_id' => $user->id,
+            'field' => $data['field'],
+            'current_value' => $current,
+            'requested_value' => $data['requestedValue'],
+            'reason' => $data['reason'],
+            'status' => 'Pending',
+        ]);
+
+        $user->activities()->create([
+            'icon' => 'profile',
+            'message' => "You requested a profile change to {$this->fieldLabel($data['field'])}",
+        ]);
+
+        return response()->json([
+            'message' => 'Change request submitted. HR will review your suggestion.',
+            'id' => $change->id,
+        ], 201);
+    }
+
+    /** Cancel the staff member's own pending change request. */
+    public function cancelChangeRequest(Request $request, int $id): JsonResponse
+    {
+        $change = $request->user()->profileChangeRequests()->findOrFail($id);
+
+        if ($change->status !== 'Pending') {
+            return response()->json(['message' => 'Only pending requests can be cancelled.'], 422);
+        }
+
+        $change->delete();
+
+        return response()->json(['message' => 'Change request cancelled.']);
+    }
+
+    private function fieldLabel(string $field): string
+    {
+        return match ($field) {
+            'firstName' => 'First Name', 'lastName' => 'Last Name',
+            'nameKh' => 'Name (Khmer)', 'dob' => 'Date of Birth',
+            'gender' => 'Sex', 'pob' => 'Place of Birth',
+            'nationality' => 'Nationality', 'nid' => 'ID / Passport Number',
+            'marital' => 'Marital Status', 'phone' => 'Phone Number',
+            'email' => 'Email', 'address' => 'Current Address',
+            default => \Illuminate\Support\Str::headline($field),
+        };
     }
 
     /** Step 2 — qualifications (replace-all sync). */
