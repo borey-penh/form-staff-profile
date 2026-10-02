@@ -41,6 +41,14 @@ const emit = defineEmits(['close'])
             </div>
           </div>
 
+          <!-- attachment (uploaded file) -->
+          <div v-else-if="d.kind === 'file'" class="detail-row">
+            <span class="help" style="min-width:110px">{{ d.label }}</span>
+            <div style="flex:1">
+              <a :href="d.value" target="_blank" rel="noopener" class="attach-link">📎 {{ d.name || 'Attachment' }}</a>
+            </div>
+          </div>
+
           <!-- simple label/value row -->
           <div v-else class="detail-row">
             <span class="help" style="min-width:110px">{{ d.label }}</span>
@@ -77,6 +85,8 @@ const emit = defineEmits(['close'])
 .detail-row { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid #eef2f7; align-items: baseline; }
 .detail-row:last-child { border-bottom: none; }
 .detail-row .help { min-width: 110px; }
+.attach-link { color: var(--primary, #0e6e66); font-size: 13px; font-weight: 600; text-decoration: none; }
+.attach-link:hover { text-decoration: underline; }
 
 .detail-block { padding: 8px 0; border-bottom: 1px solid #eef2f7; }
 .detail-block:last-child { border-bottom: none; }

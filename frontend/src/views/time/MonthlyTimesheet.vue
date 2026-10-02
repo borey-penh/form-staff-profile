@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { submitRequest, getHolidays, getLeaveBalances } from '@/services/portalService'
+import { getHolidays, getLeaveBalances } from '@/services/portalService'
+import { useRequestEdit } from '@/composables/useRequestEdit'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
@@ -9,6 +10,8 @@ import LoadingState from '@/components/LoadingState.vue'
 const toast = useToastStore()
 const auth = useAuthStore()
 const router = useRouter()
+
+const { editId, loadForEdit, save } = useRequestEdit('Timesheet')
 
 const now = new Date()
 const month = ref(now.getMonth() + 1)
@@ -60,11 +63,36 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  const f = await loadForEdit()
+  if (f?.month) {
+    storedEntries.value = f.entries ?? []
+    month.value = Number(f.month)
+    year.value = Number(f.year)
+  }
+  await load()
+  rebuild()
+})
 watch([month, year], async () => { await load(); rebuild() })
 
 function rebuild() {
   entries.value = daysInMonth(month.value, year.value)
+  // While editing a submitted timesheet, re-apply the saved values on every
+  // rebuild (month switches regenerate the grid from scratch).
+  if (editId.value && storedEntries.value) applyStored(storedEntries.value)
+}
+
+/* Saved timesheet entries, matched to the grid by ISO date. */
+const storedEntries = ref(null)
+
+function applyStored(list) {
+  const byDate = Object.fromEntries((list ?? []).map((e) => [e.date, e]))
+  for (const e of entries.value) {
+    const s = byDate[e.iso]
+    if (!s) continue
+    e.hours = s.hours ? String(s.hours) : ''
+    e.leave = s.leave ?? ''
+  }
 }
 
 function colClass(e) {
@@ -104,7 +132,7 @@ const endDate = computed(() => `${String(new Date(year.value, month.value, 0).ge
 async function submit() {
   submitting.value = true
   try {
-    await submitRequest('Timesheet', {
+    await save({
       month: month.value,
       year: year.value,
       entries: entries.value.map(({ day, iso, weekend, hours, leave }) => ({
@@ -115,8 +143,8 @@ async function submit() {
       })),
       totalHours: totalHours.value,
       totalLeaveDays: totalLeaveDays.value,
-    })
-    toast.show('✓ Timesheet submitted for approval')
+    }, null)
+    toast.show(editId.value ? '✓ Timesheet updated' : '✓ Timesheet submitted for approval')
     router.push('/requests')
   } catch (e) {
     toast.show(Object.values(e.errors ?? {})[0]?.[0] ?? e.message)
@@ -140,6 +168,8 @@ async function submit() {
         <input v-model.number="year" type="number" style="width:100px">
       </div>
     </div>
+
+    <div v-if="editId" class="help" style="margin:-4px 0 12px">✏️ Editing timesheet request #{{ editId }} — it stays editable until someone approves or rejects it.</div>
 
     <!-- Employee header (like the paper form) -->
     <section class="card">
@@ -236,8 +266,8 @@ async function submit() {
         <span class="help" style="margin-right:auto">Submitted by: <strong>{{ auth.fullName }}</strong> — approval follows the normal workflow.</span>
         <button class="btn secondary" @click="$router.back()">Cancel</button>
         <button class="btn primary" :disabled="submitting" @click="submit">
-          <span v-if="submitting">Submitting…</span>
-          <span v-else>✓ Submit Timesheet</span>
+          <span v-if="submitting">Saving…</span>
+          <span v-else>{{ editId ? '✓ Update Timesheet' : '✓ Submit Timesheet' }}</span>
         </button>
       </div>
     </section>
@@ -289,13 +319,19 @@ async function submit() {
 .rl-tag.hours { background: var(--primary-soft); color: var(--primary); }
 .rl-tag.leave { background: var(--blue-soft, #e0f2fe); color: var(--blue, #2563eb); }
 
-/* Input rows */
-.ts-xl tbody td { padding: 6px 5px; text-align: center; background: #fff; }
+/* Input rows — borderless fields so cells don't look like nested boxes */
+.ts-xl tbody td { padding: 4px 5px; text-align: center; background: #fff; }
 .ts-xl :is(input, select) {
-  width: 100%; padding: 5px 4px; font-size: 12px; border-radius: 7px; text-align: center;
+  width: 100%; padding: 6px 4px; font-size: 12px; border-radius: 7px; text-align: center;
+  background: transparent; border: 1px solid transparent;
 }
+.ts-xl :is(input:not(:disabled):hover, select:not(:disabled):hover) { background: #fff; border-color: var(--border); }
+.ts-xl :is(input:disabled, select:disabled) { background: transparent; color: var(--muted); opacity: 1; }
 .ts-xl input { font-variant-numeric: tabular-nums; }
-.ts-xl select { padding: 4px 2px; font-size: 10.5px; }
+.ts-xl input[type='number']::-webkit-outer-spin-button,
+.ts-xl input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.ts-xl input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+.ts-xl select { padding: 5px 2px; font-size: 10.5px; }
 
 /* Column states */
 .c-weekend { background: var(--field-bg) !important; }
@@ -303,7 +339,14 @@ async function submit() {
 .c-holiday { background: var(--amber-soft, #fef3c7) !important; }
 .c-holiday .dow, .c-holiday .dnum { color: var(--amber, #b45309); }
 .c-leave { background: var(--blue-soft, #e0f2fe) !important; }
-.c-today { box-shadow: inset 0 0 0 2px var(--primary); }
+
+/* Today — one continuous outline down the column, not a ring on every cell */
+.c-today { background: var(--primary-soft) !important; }
+.c-today .dow { color: var(--primary); }
+.c-today .dnum { color: var(--primary); font-weight: 800; }
+thead th.c-today { box-shadow: inset 2px 0 0 var(--primary), inset -2px 0 0 var(--primary), inset 0 2px 0 var(--primary); }
+tbody td.c-today { box-shadow: inset 2px 0 0 var(--primary), inset -2px 0 0 var(--primary); }
+tbody tr:last-child td.c-today { box-shadow: inset 2px 0 0 var(--primary), inset -2px 0 0 var(--primary), inset 0 -2px 0 var(--primary); }
 
 /* Summary */
 .ts-summary { margin-top: 14px; }

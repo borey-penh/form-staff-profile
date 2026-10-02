@@ -6,7 +6,9 @@ use App\Models\Compliance;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
@@ -62,6 +64,178 @@ class PortalTest extends TestCase
 
         $res->assertOk();
         $res->assertJsonStructure(['token', 'user' => ['id', 'staffId', 'fullName', 'role']]);
+    }
+
+    public function test_profile_photo_upload_and_remove(): void
+    {
+        Storage::fake('public');
+
+        $staff = $this->makeUser('staff');
+        $token = $staff->createToken('t')->plainTextToken;
+
+        // 1x1 real PNG so the image rule passes
+        $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
+
+        $res = $this->post('/api/profile/photo', [
+            'photo' => UploadedFile::fake()->createWithContent('me.png', $png),
+        ], ['Authorization' => "Bearer {$token}"])->assertOk();
+
+        auth()->forgetGuards();
+
+        $staff->refresh();
+        $this->assertNotNull($staff->photo_path);
+        $this->assertStringStartsWith('photos/', $staff->photo_path);
+        Storage::disk('public')->assertExists($staff->photo_path);
+        $this->assertEquals('/storage/'.$staff->photo_path, $res->json('user.photoUrl'));
+
+        // Replacing does not leave the old file behind
+        $old = $staff->photo_path;
+        $this->post('/api/profile/photo', [
+            'photo' => UploadedFile::fake()->createWithContent('me2.png', $png),
+        ], ['Authorization' => "Bearer {$token}"])->assertOk();
+        auth()->forgetGuards();
+        Storage::disk('public')->assertMissing($old);
+
+        // Removing clears the avatar
+        $this->req('delete', '/api/profile/photo', token: $token)->assertOk();
+        $this->assertNull($staff->refresh()->photo_path);
+    }
+
+    public function test_requests_listing_scoping(): void
+    {
+        $staff = $this->makeUser('staff');
+        $other = $this->makeUser('staff');
+        $manager = $this->makeUser('staff');
+        $manager->update(['role_id' => Role::where('name', 'Manager')->value('id')]);
+        $admin = $this->makeUser('admin');
+
+        $this->req('post', '/api/requests', [
+            'type' => 'Leave', 'data' => ['type' => 'Annual', 'startDate' => '2026-11-02', 'endDate' => '2026-11-02'],
+        ], $staff->createToken('t')->plainTextToken)->assertCreated();
+
+        $this->req('post', '/api/requests', [
+            'type' => 'Travel', 'data' => ['purpose' => 'X', 'destination' => 'Y', 'startDate' => '2026-11-02', 'endDate' => '2026-11-02', 'transport' => 'Bus', 'costs' => ['transport' => 0, 'accommodation' => 0, 'meals' => 0, 'other' => 0]],
+        ], $other->createToken('t')->plainTextToken)->assertCreated();
+
+        // Default listing for plain staff: only their own
+        $res = $this->req('get', '/api/requests', token: $staff->createToken('t2')->plainTextToken)->assertOk();
+        $this->assertSame([1], collect($res->json('data'))->pluck('id')->all());
+
+        // Manager submits their own request as well
+        $this->req('post', '/api/requests', [
+            'type' => 'Leave', 'data' => ['type' => 'Sick', 'startDate' => '2026-12-01', 'endDate' => '2026-12-01'],
+        ], $manager->createToken('t0')->plainTextToken)->assertCreated();
+
+        // Manager (team visibility) sees other people's requests by default —
+        // their own submission is hidden from the Approval Queue
+        $res = $this->req('get', '/api/requests', token: $manager->createToken('t')->plainTextToken)->assertOk();
+        $this->assertSame([1, 2], collect($res->json('data'))->pluck('id')->all());
+
+        // …but with mine=1 sees only their own
+        $res = $this->req('get', '/api/requests?mine=1', token: $manager->createToken('t2')->plainTextToken)->assertOk();
+        $this->assertSame([3], collect($res->json('data'))->pluck('id')->all());
+
+        // Admin also respects mine=1 on this endpoint
+        $res = $this->req('get', '/api/requests?mine=1', token: $admin->createToken('t')->plainTextToken)->assertOk();
+        $this->assertSame([], collect($res->json('data'))->pluck('id')->all());
+
+        // Admin's default (team) listing shows others' requests, own hidden
+        $res = $this->req('get', '/api/requests', token: $admin->createToken('t3')->plainTextToken)->assertOk();
+        $this->assertSame([1, 2, 3], collect($res->json('data'))->pluck('id')->all());
+    }
+
+    public function test_own_request_can_be_edited_until_decision(): void
+    {
+        $staff = $this->makeUser('staff');
+        $admin = $this->makeUser('admin');
+        $sToken = $staff->createToken('t')->plainTextToken;
+        $aToken = $admin->createToken('t')->plainTextToken;
+
+        $this->req('post', '/api/requests', [
+            'type' => 'Leave', 'data' => ['type' => 'Annual', 'startDate' => '2026-11-02', 'endDate' => '2026-11-03', 'reason' => 'Original'],
+        ], $sToken)->assertCreated();
+
+        // Owner can edit while nobody has decided
+        $this->req('post', '/api/requests/1/update', [
+            'type' => 'Leave', 'data' => ['type' => 'Sick', 'startDate' => '2026-11-04', 'endDate' => '2026-11-05', 'reason' => 'Changed'],
+        ], $sToken)->assertOk();
+
+        // Domain data updated, derived days recomputed, status still Pending
+        $this->assertDatabaseHas('leaves', ['id' => 1, 'type' => 'Sick', 'days' => 2]);
+        $this->assertDatabaseHas('requests', ['id' => 1, 'status' => 'Pending']);
+
+        // Detail payload carries prefill data + editability flag
+        $this->req('get', '/api/requests/1', token: $sToken)
+            ->assertOk()
+            ->assertJsonPath('editable', true)
+            ->assertJsonPath('form.type', 'Sick');
+
+        // Other users cannot edit someone else's request
+        $this->req('post', '/api/requests/1/update', [
+            'type' => 'Leave', 'data' => ['reason' => 'Hacked'],
+        ], $aToken)->assertStatus(403);
+
+        // After a decision the request is locked for editing
+        $this->req('post', '/api/requests/1/act', ['action' => 'approve', 'note' => 'OK'], $aToken)->assertOk();
+        $this->req('post', '/api/requests/1/update', [
+            'type' => 'Leave', 'data' => ['reason' => 'Too late'],
+        ], $sToken)->assertStatus(403);
+
+        $this->assertDatabaseHas('leaves', ['id' => 1, 'reason' => 'Changed']);
+    }
+
+    public function test_travel_request_with_attachment(): void
+    {
+        Storage::fake('public');
+
+        $staff = $this->makeUser('staff');
+        $token = $staff->createToken('t')->plainTextToken;
+
+        // Multipart submit with an attachment, like the browser does
+        $this->post('/api/requests', [
+            'type' => 'Travel',
+            'data' => [
+                'purpose' => 'Field visit',
+                'destination' => 'Siem Reap',
+                'startDate' => '2026-11-02',
+                'endDate' => '2026-11-04',
+                'transport' => 'Bus',
+                'costs' => ['transport' => 18, 'accommodation' => 200, 'meals' => 100, 'other' => 20],
+            ],
+            'attachment' => UploadedFile::fake()->createWithContent('receipt.png', 'fake-image-bytes'),
+        ], ['Authorization' => "Bearer {$token}"])->assertCreated();
+
+        auth()->forgetGuards();
+
+        $this->assertDatabaseCount('travels', 1);
+        $this->assertDatabaseHas('requests', ['type' => 'Travel', 'status' => 'Pending']);
+
+        // Detail payload exposes the attachment as a downloadable link
+        $details = $this->req('get', '/api/requests/1', token: $token)->json('details');
+        $file = collect($details)->firstWhere('kind', 'file');
+
+        $this->assertNotNull($file, 'Attachment detail row missing.');
+        $this->assertStringContainsString('/storage/requests/', $file['value']);
+        Storage::disk('public')->assertExists(str_replace('/storage/', '', $file['value']));
+    }
+
+    public function test_travel_request_without_attachment_hides_row(): void
+    {
+        $staff = $this->makeUser('staff');
+        $token = $staff->createToken('t')->plainTextToken;
+
+        $this->req('post', '/api/requests', [
+            'type' => 'Travel',
+            'data' => [
+                'purpose' => 'Meeting', 'destination' => 'Phnom Penh',
+                'startDate' => '2026-11-02', 'endDate' => '2026-11-02', 'transport' => 'Car',
+                'costs' => ['transport' => 0, 'accommodation' => 0, 'meals' => 0, 'other' => 0],
+            ],
+        ], $token)->assertCreated();
+
+        $details = $this->req('get', '/api/requests/1', token: $token)->json('details');
+
+        $this->assertNull(collect($details)->firstWhere('label', 'Attachment'));
     }
 
     public function test_login_rejects_bad_password(): void
@@ -218,6 +392,41 @@ class PortalTest extends TestCase
 
         // A manager WITH requests.approve permission is allowed
         $this->req('post', '/api/requests/1/act', ['action' => 'approve'], $mToken)
+            ->assertOk()
+            ->assertJsonPath('status', 'Approved');
+    }
+
+    public function test_manager_cannot_decide_own_requests(): void
+    {
+        $manager = $this->makeUser('staff');
+        $manager->update(['role_id' => Role::where('name', 'Manager')->value('id')]);
+        $mToken = $manager->createToken('t')->plainTextToken;
+
+        // Manager submits their own leave request
+        $this->req('post', '/api/requests', [
+            'type' => 'Leave',
+            'data' => ['type' => 'Annual', 'startDate' => '2026-12-01', 'endDate' => '2026-12-02', 'reason' => 'Own leave'],
+        ], $mToken)->assertCreated();
+
+        // Decision actions on their own request are forbidden
+        foreach (['approve', 'reject', 'return', 'complete'] as $action) {
+            $this->req('post', '/api/requests/1/act', ['action' => $action], $mToken)->assertStatus(403);
+        }
+
+        $this->assertDatabaseHas('requests', ['id' => 1, 'status' => 'Pending']);
+
+        // Progressing their own submission is still allowed
+        $this->req('post', '/api/requests/1/act', ['action' => 'cancel'], $mToken)
+            ->assertOk()
+            ->assertJsonPath('status', 'Cancelled');
+
+        // …and they can still approve other people's requests
+        $this->req('post', '/api/requests', [
+            'type' => 'Leave',
+            'data' => ['type' => 'Sick', 'startDate' => '2026-12-03', 'endDate' => '2026-12-03'],
+        ], $this->makeUser('staff')->createToken('t')->plainTextToken)->assertCreated();
+
+        $this->req('post', '/api/requests/2/act', ['action' => 'approve'], $mToken)
             ->assertOk()
             ->assertJsonPath('status', 'Approved');
     }

@@ -104,13 +104,14 @@ async function confirmAct(note) {
             <td>{{ formatDate(r.submittedAt) }}</td>
             <td><StatusBadge :status="r.status" /></td>
             <td @click.stop>
-              <div v-if="canAct" class="btn-row">
+              <div v-if="canAct && !r.own" class="btn-row">
                 <button v-if="r.status === 'Pending'" class="btn sm soft-review" @click="act(r, 'review')">Review</button>
                 <button class="btn sm soft-approve" @click="act(r, 'approve')">Approve</button>
                 <button class="btn sm soft-reject" @click="act(r, 'reject')">Reject</button>
                 <button class="btn sm secondary" @click="act(r, 'return')">Return</button>
                 <button v-if="r.status === 'Approved' && r.type === 'Voucher'" class="btn sm soft-info" @click="act(r, 'complete')">Mark Paid</button>
               </div>
+              <span v-else-if="r.own" class="help">Your request — approval by someone else</span>
               <span v-else class="help">View only</span>
             </td>
           </tr>

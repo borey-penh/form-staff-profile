@@ -54,6 +54,7 @@ class DashboardController extends Controller
         if ($user->hasPermission('requests.view-team')) {
             $queue = UserRequest::with('user')
                 ->whereIn('status', ['Pending', 'In Review'])
+                ->where('user_id', '!=', $user->id) // own requests never appear as "awaiting your approval"
                 ->orderByDesc('submitted_at');
             $pendingApprovalsCount = (clone $queue)->count();
             $pendingApprovals = $queue->limit(6)->get()->map(fn ($r) => [

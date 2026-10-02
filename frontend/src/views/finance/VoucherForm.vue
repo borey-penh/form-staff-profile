@@ -1,11 +1,13 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { submitRequest } from '@/services/portalService'
+import { computed, onMounted, ref } from 'vue'
+import { useRequestEdit } from '@/composables/useRequestEdit'
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
 
 const toast = useToastStore()
 const router = useRouter()
+
+const { editId, currentAttachment, loadForEdit, save } = useRequestEdit('Voucher')
 
 const form = ref({
   date: new Date().toISOString().slice(0, 10),
@@ -15,9 +17,28 @@ const form = ref({
 })
 const lines = ref([{ description: '', amount: 0 }])
 const submitting = ref(false)
+const attachment = ref(null)
+const fileInput = ref(null)
+
+function clearAttachment() {
+  attachment.value = null
+  if (fileInput.value) fileInput.value.value = ''
+}
 
 const total = computed(() => lines.value.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0))
 const voucherNo = `PV-${new Date().getFullYear()}-##### (auto)`
+const savedVoucherNo = ref('') // real number shown when editing an existing voucher
+
+onMounted(() => loadForEdit((f) => {
+  if (f.voucherNo) savedVoucherNo.value = f.voucherNo
+  if (f.date) form.value.date = f.date
+  if (f.expenseType) form.value.expenseType = f.expenseType
+  form.value.description = f.description ?? ''
+  if (f.paymentMethod) form.value.paymentMethod = f.paymentMethod
+  if (Array.isArray(f.lines) && f.lines.length) {
+    lines.value = f.lines.map((l) => ({ description: l.description ?? '', amount: l.amount ?? 0 }))
+  }
+}))
 
 async function submit() {
   const valid = lines.value.filter((l) => l.description && parseFloat(l.amount) > 0)
@@ -25,11 +46,11 @@ async function submit() {
 
   submitting.value = true
   try {
-    await submitRequest('Voucher', {
+    await save({
       ...form.value,
       lines: valid.map((l) => ({ description: l.description, amount: parseFloat(l.amount) || 0 })),
-    })
-    toast.show('✓ Voucher submitted — routed to Manager → Finance')
+    }, attachment.value)
+    toast.show(editId.value ? '✓ Voucher updated' : '✓ Voucher submitted — routed to Manager → Finance')
     router.push('/requests')
   } catch (e) {
     toast.show(Object.values(e.errors ?? {})[0]?.[0] ?? e.message)
@@ -49,8 +70,9 @@ async function submit() {
     </div>
 
     <section class="card" style="max-width:760px">
+      <div v-if="editId" class="help" style="margin-bottom:12px">✏️ Editing voucher request #{{ editId }} — it stays editable until someone approves or rejects it.</div>
       <div class="row3">
-        <div class="field"><label>Voucher No.</label><input :value="voucherNo" disabled></div>
+        <div class="field"><label>Voucher No.</label><input :value="editId ? savedVoucherNo : voucherNo" disabled></div>
         <div class="field"><label>Date <span class="req">*</span></label><input v-model="form.date" type="date"></div>
         <div class="field">
           <label>Expense Type <span class="req">*</span></label>
@@ -87,8 +109,20 @@ async function submit() {
         </div>
       </div>
 
+      <div class="field">
+        <label>Attachment (optional — PDF/Image, max 5MB)</label>
+        <div class="upload-box" style="margin:0">
+          <input ref="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx" @change="e => attachment = e.target.files[0]">
+          <button v-if="attachment" class="btn sm secondary" type="button" @click="clearAttachment">✕ Remove</button>
+        </div>
+        <div v-if="attachment" class="help" style="margin-top:4px">📎 {{ attachment.name }}</div>
+        <div v-else-if="currentAttachment" class="help" style="margin-top:4px">
+          📎 <a :href="currentAttachment" target="_blank" rel="noopener">Current attachment</a> kept — choose a file to replace it.
+        </div>
+      </div>
+
       <div class="actions">
-        <button class="btn primary" :disabled="submitting" @click="submit">Submit Voucher</button>
+        <button class="btn primary" :disabled="submitting" @click="submit">{{ editId ? '✓ Update Voucher' : 'Submit Voucher' }}</button>
       </div>
     </section>
   </div>

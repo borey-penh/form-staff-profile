@@ -1,18 +1,34 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { submitRequest, getLeaveBalances } from '@/services/portalService'
+import { getLeaveBalances } from '@/services/portalService'
+import { useRequestEdit } from '@/composables/useRequestEdit'
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
 
 const toast = useToastStore()
 const router = useRouter()
 
+const { editId, currentAttachment, loadForEdit, save } = useRequestEdit('Leave')
+
 const balances = ref([])
 const form = ref({ type: 'Annual', startDate: '', endDate: '', reason: '' })
 const submitting = ref(false)
+const attachment = ref(null)
+const fileInput = ref(null)
+
+function clearAttachment() {
+  attachment.value = null
+  if (fileInput.value) fileInput.value.value = ''
+}
 
 onMounted(async () => {
   balances.value = (await getLeaveBalances()).data
+  await loadForEdit((f) => {
+    if (f.type) form.value.type = f.type
+    form.value.startDate = f.startDate ?? ''
+    form.value.endDate = f.endDate ?? ''
+    form.value.reason = f.reason ?? ''
+  })
 })
 
 const days = computed(() => {
@@ -30,8 +46,8 @@ async function submit() {
   if (days.value < 1) return toast.show('Check your dates.')
   submitting.value = true
   try {
-    await submitRequest('Leave', { ...form.value, days: days.value })
-    toast.show('✓ Leave request submitted — status: Pending')
+    await save({ ...form.value, days: days.value }, attachment.value)
+    toast.show(editId.value ? '✓ Leave request updated' : '✓ Leave request submitted — status: Pending')
     router.push('/requests')
   } catch (e) {
     toast.show(Object.values(e.errors ?? {})[0]?.[0] ?? e.message)
@@ -52,7 +68,9 @@ async function submit() {
 
     <div class="grid2">
       <section class="card">
-        <div class="card-head"><h2>New Request</h2></div>
+        <div class="card-head"><h2>{{ editId ? `Edit Request #${editId}` : 'New Request' }}</h2>
+          <span v-if="editId" class="help">✏️ Editing — your request stays editable until someone approves or rejects it.</span>
+        </div>
 
         <div class="field">
           <label>Leave Type <span class="req">*</span></label>
@@ -74,8 +92,20 @@ async function submit() {
           <textarea v-model="form.reason" rows="3" placeholder="Brief reason for leave…"></textarea>
         </div>
 
+        <div class="field">
+          <label>Attachment (optional — PDF/Image, max 5MB)</label>
+          <div class="upload-box" style="margin:0">
+            <input ref="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx" @change="e => attachment = e.target.files[0]">
+            <button v-if="attachment" class="btn sm secondary" type="button" @click="clearAttachment">✕ Remove</button>
+          </div>
+          <div v-if="attachment" class="help" style="margin-top:4px">📎 {{ attachment.name }}</div>
+          <div v-else-if="currentAttachment" class="help" style="margin-top:4px">
+            📎 <a :href="currentAttachment" target="_blank" rel="noopener">Current attachment</a> kept — choose a file to replace it.
+          </div>
+        </div>
+
         <div class="actions">
-          <button class="btn primary" :disabled="submitting" @click="submit">Submit Request</button>
+          <button class="btn primary" :disabled="submitting" @click="submit">{{ editId ? '✓ Update Request' : 'Submit Request' }}</button>
         </div>
       </section>
 

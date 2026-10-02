@@ -1,11 +1,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { submitRequest, getVehicles } from '@/services/portalService'
+import { getVehicles } from '@/services/portalService'
+import { useRequestEdit } from '@/composables/useRequestEdit'
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
 
 const toast = useToastStore()
 const router = useRouter()
+
+const { editId, loadForEdit, save } = useRequestEdit('Fuel')
 
 const vehicles = ref([])
 const vehicleId = ref('')
@@ -20,6 +23,16 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 onMounted(async () => {
   vehicles.value = (await getVehicles()).data
   if (vehicles.value[0]) vehicleId.value = vehicles.value[0].id
+  await loadForEdit((f) => {
+    if (f.vehicleId) vehicleId.value = f.vehicleId
+    if (f.month) month.value = Number(f.month)
+    if (f.year) year.value = Number(f.year)
+    if (Array.isArray(f.records) && f.records.length) {
+      records.value = f.records.map((r) => ({
+        date: r.date ?? '', mileage: r.mileage ?? '', liters: r.liters ?? '', cost: r.cost ?? '',
+      }))
+    }
+  })
 })
 
 const totalLiters = computed(() => records.value.reduce((s, r) => s + (parseFloat(r.liters) || 0), 0))
@@ -36,7 +49,7 @@ async function submit() {
   }
   submitting.value = true
   try {
-    await submitRequest('Fuel', {
+    await save({
       vehicleId: Number(vehicleId.value),
       month: month.value,
       year: year.value,
@@ -46,8 +59,8 @@ async function submit() {
         liters: parseFloat(r.liters) || 0,
         cost: parseFloat(r.cost) || 0,
       })),
-    })
-    toast.show('✓ Fuel log-sheet submitted')
+    }, null)
+    toast.show(editId.value ? '✓ Fuel log-sheet updated' : '✓ Fuel log-sheet submitted')
     router.push('/requests')
   } catch (e) {
     toast.show(Object.values(e.errors ?? {})[0]?.[0] ?? e.message)
@@ -67,6 +80,7 @@ async function submit() {
     </div>
 
     <section class="card">
+      <div v-if="editId" class="help" style="margin-bottom:12px">✏️ Editing request #{{ editId }} — it stays editable until someone approves or rejects it.</div>
       <div class="row2">
         <div class="field">
           <label>Vehicle <span class="req">*</span></label>
@@ -107,7 +121,7 @@ async function submit() {
           <span>Total Fuel: <strong>{{ Math.round(totalLiters * 100) / 100 }} L</strong></span>
           <span>Total Cost: <strong>${{ Math.round(totalCost * 100) / 100 }}</strong></span>
         </div>
-        <button class="btn primary" :disabled="submitting" @click="submit">Submit Log-Sheet</button>
+        <button class="btn primary" :disabled="submitting" @click="submit">{{ editId ? '✓ Update Log-Sheet' : 'Submit Log-Sheet' }}</button>
       </div>
     </section>
   </div>

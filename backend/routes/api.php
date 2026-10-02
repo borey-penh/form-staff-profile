@@ -30,6 +30,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/profile/personal', [ProfileController::class, 'updatePersonal']);
     Route::put('/profile/qualifications', [ProfileController::class, 'saveQualifications']);
     Route::put('/profile/family', [ProfileController::class, 'saveFamily']);
+    Route::post('/profile/photo', [ProfileController::class, 'uploadPhoto']);
+    Route::delete('/profile/photo', [ProfileController::class, 'deletePhoto']);
     Route::post('/profile/documents', [ProfileController::class, 'uploadDocument']);
     Route::delete('/profile/documents/{id}', [ProfileController::class, 'deleteDocument']);
     Route::post('/profile/declaration', [ProfileController::class, 'declare']);
@@ -53,6 +55,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/requests', [RequestController::class, 'index']);
     Route::post('/requests', [RequestController::class, 'store']);
     Route::get('/requests/{id}', [RequestController::class, 'show']);
+    Route::post('/requests/{id}/update', [RequestController::class, 'update']);
     Route::post('/requests/{id}/act', [RequestController::class, 'act']);
 
     // Misc reference data

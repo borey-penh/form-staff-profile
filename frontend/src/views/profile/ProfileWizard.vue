@@ -4,6 +4,7 @@ import {
   getProfile, savePersonal, saveQualifications, saveFamily,
   uploadDocument, deleteDocument, submitDeclaration,
   submitChangeRequest, cancelChangeRequest,
+  uploadProfilePhoto, deleteProfilePhoto,
 } from '@/services/portalService'
 import { useToastStore } from '@/stores/toast'
 import { useAuthStore } from '@/stores/auth'
@@ -107,6 +108,53 @@ const sIcons = {
 const docTypes = ['National ID', 'CV', 'Degree Certificate', 'Contract', 'Other']
 const newDocType = ref('National ID')
 const newDocFile = ref(null)
+
+/* ---- Profile photo (avatar) ---- */
+const photoInput = ref(null)
+const photoUploading = ref(false)
+
+const initials = computed(() =>
+  ((user.firstName?.[0] ?? '') + (user.lastName?.[0] ?? '')).toUpperCase() || '?')
+
+async function onPhotoChange(e) {
+  const file = e.target.files?.[0]
+  if (photoInput.value) photoInput.value.value = ''
+  if (!file) return
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    return toast.show('Please choose a JPG, PNG or WebP image.')
+  }
+  if (file.size > 4 * 1024 * 1024) {
+    return toast.show('Photo must be 4MB or smaller.')
+  }
+
+  photoUploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('photo', file)
+    const res = await uploadProfilePhoto(fd)
+    auth.setUser(res.user)
+    Object.assign(user, res.user) // refresh the wizard avatar immediately (no restart needed)
+    toast.show('✓ Profile photo updated')
+  } catch (e) {
+    toast.show(Object.values(e.errors ?? {}).flat()[0] ?? e.message)
+  } finally {
+    photoUploading.value = false
+  }
+}
+
+async function removePhoto() {
+  photoUploading.value = true
+  try {
+    const res = await deleteProfilePhoto()
+    auth.setUser(res.user)
+    Object.assign(user, res.user)
+    toast.show('Profile photo removed')
+  } catch (e) {
+    toast.show(e.message)
+  } finally {
+    photoUploading.value = false
+  }
+}
 
 const blankQual = (type) => ({
   type, title: '', institution: '', field: '',
@@ -261,6 +309,22 @@ const experience = computed(() => quals.value.filter((q) => q.type === 'experien
         <div class="sub-head">
           <span class="sh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" v-html="sIcons.user"></svg></span>
           Personal Details
+
+          <div class="avatar-edit">
+            <div class="avatar-ring" :class="{ busy: photoUploading }">
+              <img v-if="user.photoUrl" :src="user.photoUrl" alt="Profile photo">
+              <span v-else>{{ initials }}</span>
+              <button
+                class="avatar-cam"
+                type="button"
+                title="Upload profile photo"
+                :disabled="photoUploading"
+                @click="photoInput?.click()"
+              >{{ photoUploading ? '…' : '📷' }}</button>
+            </div>
+            <input ref="photoInput" type="file" accept=".jpg,.jpeg,.png,.webp" hidden @change="onPhotoChange">
+            <button v-if="user.photoUrl" class="avatar-remove" type="button" @click="removePhoto">Remove photo</button>
+          </div>
         </div>
 
         <div class="row2">
@@ -589,3 +653,62 @@ const experience = computed(() => quals.value.filter((q) => q.type === 'experien
     </div>
   </div>
 </template>
+
+<style scoped>
+.avatar-edit {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.avatar-ring {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--primary-soft, #e6f4f2);
+  color: var(--primary, #0e6e66);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 20px;
+  overflow: visible;
+  flex: none;
+}
+.avatar-ring img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.avatar-ring.busy { opacity: .6; }
+.avatar-cam {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: var(--primary, #0e6e66);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-cam:disabled { cursor: wait; }
+.avatar-remove {
+  background: none;
+  border: none;
+  color: var(--muted, #64748b);
+  font-size: 10.5px;
+  cursor: pointer;
+  padding: 0;
+}
+.avatar-remove:hover { color: var(--red, #dc2626); text-decoration: underline; }
+</style>

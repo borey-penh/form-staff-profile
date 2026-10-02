@@ -32,6 +32,11 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = payload.user
   }
 
+  /** Patch the logged-in user (e.g. after a profile photo upload). */
+  function setUser(u) {
+    if (u) user.value = u
+  }
+
   async function login(email, password) {
     loading.value = true
     try {
@@ -49,5 +54,5 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  return { user, loading, isLoggedIn, isAdmin, fullName, permissions, can, bootstrap, login, logout }
+  return { user, loading, isLoggedIn, isAdmin, fullName, permissions, can, bootstrap, login, logout, setUser }
 })

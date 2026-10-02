@@ -1,15 +1,34 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { submitRequest } from '@/services/portalService'
+import { computed, onMounted, ref } from 'vue'
+import { useRequestEdit } from '@/composables/useRequestEdit'
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
 
 const toast = useToastStore()
 const router = useRouter()
 
+const { editId, currentAttachment, loadForEdit, save } = useRequestEdit('Purchase')
+
 const form = ref({ purpose: '', department: '', requiredDate: '', justification: '' })
 const items = ref([{ name: '', qty: 1, unitCost: 0 }])
 const submitting = ref(false)
+const attachment = ref(null)
+const fileInput = ref(null)
+
+function clearAttachment() {
+  attachment.value = null
+  if (fileInput.value) fileInput.value.value = ''
+}
+
+onMounted(() => loadForEdit((f) => {
+  form.value.purpose = f.purpose ?? ''
+  form.value.department = f.department ?? ''
+  form.value.requiredDate = f.requiredDate ?? ''
+  form.value.justification = f.justification ?? ''
+  if (Array.isArray(f.items) && f.items.length) {
+    items.value = f.items.map((i) => ({ name: i.name ?? '', qty: i.qty ?? 1, unitCost: i.unitCost ?? 0 }))
+  }
+}))
 
 function lineTotal(it) {
   return (parseFloat(it.qty) || 0) * (parseFloat(it.unitCost) || 0)
@@ -23,11 +42,11 @@ async function submit() {
   }
   submitting.value = true
   try {
-    await submitRequest('Purchase', {
+    await save({
       ...form.value,
       items: valid.map((i) => ({ name: i.name, qty: parseFloat(i.qty) || 0, unitCost: parseFloat(i.unitCost) || 0 })),
-    })
-    toast.show('✓ Purchase request submitted — status: Pending')
+    }, attachment.value)
+    toast.show(editId.value ? '✓ Purchase request updated' : '✓ Purchase request submitted — status: Pending')
     router.push('/requests')
   } catch (e) {
     toast.show(Object.values(e.errors ?? {})[0]?.[0] ?? e.message)
@@ -47,7 +66,9 @@ async function submit() {
     </div>
 
     <section class="card" style="max-width:960px">
-      <div class="card-head"><h2>Request Information</h2></div>
+      <div class="card-head"><h2>Request Information</h2>
+        <span v-if="editId" class="help">✏️ Editing request #{{ editId }} — it stays editable until someone approves or rejects it.</span>
+      </div>
       <div class="field"><label>Purpose <span class="req">*</span></label><textarea v-model="form.purpose" rows="2"></textarea></div>
       <div class="row2">
         <div class="field"><label>Department <span class="req">*</span></label><input v-model="form.department"></div>
@@ -78,12 +99,24 @@ async function submit() {
 
       <div class="field" style="margin-top:14px"><label>Justification</label><textarea v-model="form.justification" rows="2"></textarea></div>
 
+      <div class="field">
+        <label>Attachment (optional — PDF/Image, max 5MB)</label>
+        <div class="upload-box" style="margin:0">
+          <input ref="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx" @change="e => attachment = e.target.files[0]">
+          <button v-if="attachment" class="btn sm secondary" type="button" @click="clearAttachment">✕ Remove</button>
+        </div>
+        <div v-if="attachment" class="help" style="margin-top:4px">📎 {{ attachment.name }}</div>
+        <div v-else-if="currentAttachment" class="help" style="margin-top:4px">
+          📎 <a :href="currentAttachment" target="_blank" rel="noopener">Current attachment</a> kept — choose a file to replace it.
+        </div>
+      </div>
+
       <div class="actions">
         <span class="help" style="margin-right:auto">The P.R. number is assigned by finance after review.</span>
         <button class="btn secondary" @click="$router.back()">Cancel</button>
         <button class="btn primary" :disabled="submitting" @click="submit">
-          <span v-if="submitting">Submitting…</span>
-          <span v-else>✓ Submit Request</span>
+          <span v-if="submitting">Saving…</span>
+          <span v-else>{{ editId ? '✓ Update Request' : '✓ Submit Request' }}</span>
         </button>
       </div>
     </section>

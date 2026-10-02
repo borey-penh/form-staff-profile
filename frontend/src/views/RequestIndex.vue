@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { getRequests, getRequest } from '@/services/portalService'
+import { getMyRequests, getRequest } from '@/services/portalService'
 import StatusBadge from '@/components/StatusBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingState from '@/components/LoadingState.vue'
@@ -17,10 +17,17 @@ const filters = ref({ type: '', status: '' })
 const TYPES = ['Leave', 'Overtime', 'Timesheet', 'Travel', 'Fuel', 'Purchase', 'Voucher']
 const STATUSES = ['Draft', 'Pending', 'In Review', 'Approved', 'Rejected', 'Returned', 'Completed', 'Cancelled']
 
+// Own requests stay editable until someone approves/rejects/completes them.
+const EDITABLE = ['Pending', 'In Review', 'Returned']
+const EDIT_ROUTES = {
+  Leave: '/leave', Overtime: '/overtime', Timesheet: '/timesheet',
+  Travel: '/travel', Fuel: '/fuel', Purchase: '/purchase', Voucher: '/vouchers',
+}
+
 async function load() {
   loading.value = true
   try {
-    items.value = (await getRequests({
+    items.value = (await getMyRequests({
       type: filters.value.type || undefined,
       status: filters.value.status || undefined,
     })).data
@@ -69,7 +76,11 @@ async function open(r) {
             <td><strong>{{ r.type }}</strong></td>
             <td>{{ formatDate(r.submittedAt) }}</td>
             <td><StatusBadge :status="r.status" /></td>
-            <td><button class="btn sm secondary" @click="open(r)">View</button></td>
+            <td style="white-space:nowrap">
+              <button class="btn sm secondary" @click="open(r)">View</button>
+              <RouterLink v-if="EDITABLE.includes(r.status)" class="btn sm primary" style="margin-left:6px"
+                          :to="`${EDIT_ROUTES[r.type]}?edit=${r.id}`">Edit</RouterLink>
+            </td>
           </tr>
         </tbody>
       </table>

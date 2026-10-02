@@ -321,6 +321,50 @@ class ProfileController extends Controller
         return response()->json(['message' => 'Declaration submitted.']);
     }
 
+    /** Upload or replace the profile photo (shown as the avatar). */
+    public function uploadPhoto(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'photo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:4096'],
+        ]);
+
+        $user = $request->user();
+
+        if ($user->photo_path) {
+            Storage::disk('public')->delete($user->photo_path); // replace the old file
+        }
+
+        $file = $data['photo'];
+        $name = now()->format('YmdHis').'-'.uniqid().'.'.strtolower($file->getClientOriginalExtension());
+        $user->update(['photo_path' => $file->storeAs('photos', $name, 'public')]);
+
+        $user->activities()->create([
+            'icon' => 'profile',
+            'message' => 'You updated your profile photo',
+        ]);
+
+        return response()->json([
+            'message' => 'Profile photo updated.',
+            'user' => new UserResource($user->fresh()),
+        ]);
+    }
+
+    /** Remove the profile photo (the avatar falls back to initials). */
+    public function deletePhoto(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user->photo_path) {
+            Storage::disk('public')->delete($user->photo_path);
+            $user->update(['photo_path' => null]);
+        }
+
+        return response()->json([
+            'message' => 'Profile photo removed.',
+            'user' => new UserResource($user->fresh()),
+        ]);
+    }
+
     /** Delete a document. */
     public function deleteDocument(Request $request, int $id): JsonResponse
     {

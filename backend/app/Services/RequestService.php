@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Models\UserRequest;
 use App\Models\Voucher;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class RequestService
 {
@@ -39,20 +40,9 @@ class RequestService
             throw new \InvalidArgumentException("Unknown request type [{$type}].");
         }
 
-        [$model, $fields] = self::DOMAIN[$type];
+        [$model] = self::DOMAIN[$type];
 
-        // Accept camelCase (JS) or snake_case (PHP) payloads
-        $normalized = [];
-        foreach ($data as $key => $value) {
-            $normalized[\Illuminate\Support\Str::snake($key)] = $value;
-        }
-
-        $payload = [];
-        foreach ($fields as $field) {
-            if (array_key_exists($field, $normalized)) {
-                $payload[$field] = $normalized[$field];
-            }
-        }
+        $payload = $this->extractPayload($type, $data);
 
         // Auto-computed domain fields
         $payload = $this->hydrate($type, $user, $payload);
@@ -83,6 +73,95 @@ class RequestService
 
             return $request;
         });
+    }
+
+    /**
+     * Edit the requester's own submission — possible until a reviewer
+     * decides the request (approves, rejects or completes it).
+     */
+    public function update(UserRequest $request, User $user, array $data): UserRequest
+    {
+        if (! isset(self::DOMAIN[$request->type])) {
+            throw new \InvalidArgumentException("Unknown request type [{$request->type}].");
+        }
+
+        [$model] = self::DOMAIN[$request->type];
+
+        $payload = $this->extractPayload($request->type, $data);
+        $payload = $this->hydrate($request->type, $user, $payload);
+
+        // The voucher number is assigned at creation — never regenerated on edit.
+        unset($payload['voucher_no']);
+
+        DB::transaction(function () use ($request, $user, $model, $payload) {
+            $record = $model::findOrFail($request->related_id);
+
+            // Swapping an attachment deletes the replaced file.
+            if (array_key_exists('file_path', $payload) && $record->file_path && $record->file_path !== $payload['file_path']) {
+                Storage::disk('public')->delete($record->file_path);
+            }
+
+            $record->update($payload);
+
+            RequestAction::create([
+                'request_id' => $request->id,
+                'user_id' => $user->id,
+                'action' => 'updated',
+                'note' => null,
+            ]);
+        });
+
+        return $request;
+    }
+
+    /** True once a reviewer has decided (approve / reject / complete) — the submission is then locked. */
+    public function hasDecision(UserRequest $request): bool
+    {
+        return $request->actions()
+            ->whereIn('action', ['approve', 'reject', 'complete'])
+            ->exists();
+    }
+
+    /**
+     * Raw domain data (camelCased) for prefilling the request form in edit mode.
+     */
+    public function formPayload(UserRequest $request): array
+    {
+        [$model, $fields] = self::DOMAIN[$request->type];
+        $record = $request->related_id ? $model::find($request->related_id) : null;
+        if (! $record) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($fields as $field) {
+            $value = $record->{$field} ?? null;
+            $out[\Illuminate\Support\Str::camel($field)] = $value instanceof \DateTimeInterface
+                ? $value->format('Y-m-d')
+                : $value;
+        }
+
+        return $out;
+    }
+
+    /** Accept camelCase (JS) or snake_case (PHP) keys, keep only the type's fields. */
+    private function extractPayload(string $type, array $data): array
+    {
+        [, $fields] = self::DOMAIN[$type];
+
+        $normalized = [];
+        foreach ($data as $key => $value) {
+            $normalized[\Illuminate\Support\Str::snake($key)] = $value;
+        }
+
+        $payload = [];
+        foreach ($fields as $field) {
+            if (array_key_exists($field, $normalized)) {
+                $payload[$field] = $normalized[$field];
+            }
+        }
+
+        return $payload;
     }
 
     /**
@@ -146,6 +225,21 @@ class RequestService
             }
 
             $value = $record->{$field} ?? null;
+
+            // Attachment: only shown when a file was uploaded, as a download link.
+            if ($field === 'file_path') {
+                if (! $value) {
+                    continue;
+                }
+                $out[] = [
+                    'label' => 'Attachment',
+                    'kind' => 'file',
+                    'value' => '/storage/'.$value,
+                    'name' => basename($value),
+                ];
+                continue;
+            }
+
             $out[] = match ($field) {
                 'entries' => $this->tableDetail('Daily Entries', ['Date', 'Day', 'Hours', 'Leave'], $this->entryRows($value)),
                 'items' => $this->tableDetail('Items', ['Item', 'Qty', 'Unit Cost', 'Total'], $this->itemRows($value)),
@@ -302,7 +396,6 @@ class RequestService
             'cost' => 'Cost',
             'vehicle_id' => 'Vehicle',
             'supervisor_id' => 'Supervisor',
-            'file_path' => 'Attachment',
             default => \Illuminate\Support\Str::headline($field),
         };
     }

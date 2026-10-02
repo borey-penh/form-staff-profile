@@ -1,14 +1,23 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { submitRequest } from '@/services/portalService'
+import { computed, onMounted, ref } from 'vue'
+import { useRequestEdit } from '@/composables/useRequestEdit'
 import { useToastStore } from '@/stores/toast'
 import { useRouter } from 'vue-router'
 
 const toast = useToastStore()
 const router = useRouter()
 
+const { editId, loadForEdit, save } = useRequestEdit('Overtime')
+
 const form = ref({ date: '', startTime: '', endTime: '', reason: '', supervisorName: '' })
 const submitting = ref(false)
+
+onMounted(() => loadForEdit((f) => {
+  form.value.date = f.date ?? ''
+  form.value.startTime = f.startTime ?? ''
+  form.value.endTime = f.endTime ?? ''
+  form.value.reason = f.reason ?? ''
+}))
 
 const hours = computed(() => {
   if (!form.value.startTime || !form.value.endTime) return 0
@@ -25,8 +34,8 @@ async function submit() {
   }
   submitting.value = true
   try {
-    await submitRequest('Overtime', { ...form.value, hours })
-    toast.show('✓ Overtime request submitted — status: Pending')
+    await save({ ...form.value, hours: hours.value }, null)
+    toast.show(editId.value ? '✓ Overtime request updated' : '✓ Overtime request submitted — status: Pending')
     router.push('/requests')
   } catch (e) {
     toast.show(Object.values(e.errors ?? {})[0]?.[0] ?? e.message)
@@ -46,6 +55,7 @@ async function submit() {
     </div>
 
     <section class="card" style="max-width:640px">
+      <div v-if="editId" class="help" style="margin-bottom:12px">✏️ Editing request #{{ editId }} — it stays editable until someone approves or rejects it.</div>
       <div class="row2">
         <div class="field"><label>Date <span class="req">*</span></label><input v-model="form.date" type="date"></div>
         <div class="field"><label>Supervisor</label><input v-model="form.supervisorName" placeholder="Supervisor name"></div>
@@ -62,7 +72,7 @@ async function submit() {
       <div class="field"><label>Reason</label><textarea v-model="form.reason" rows="3"></textarea></div>
 
       <div class="actions">
-        <button class="btn primary" :disabled="submitting" @click="submit">Submit Request</button>
+        <button class="btn primary" :disabled="submitting" @click="submit">{{ editId ? '✓ Update Request' : 'Submit Request' }}</button>
       </div>
     </section>
   </div>
