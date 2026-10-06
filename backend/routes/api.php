@@ -29,10 +29,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/profile', [ProfileController::class, 'show']);
     Route::put('/profile/personal', [ProfileController::class, 'updatePersonal']);
     Route::put('/profile/qualifications', [ProfileController::class, 'saveQualifications']);
+    Route::put('/profile/skills', [ProfileController::class, 'saveSkills']);
     Route::put('/profile/family', [ProfileController::class, 'saveFamily']);
+    Route::put('/profile/notes', [ProfileController::class, 'saveNotes']);
     Route::post('/profile/photo', [ProfileController::class, 'uploadPhoto']);
     Route::delete('/profile/photo', [ProfileController::class, 'deletePhoto']);
     Route::post('/profile/documents', [ProfileController::class, 'uploadDocument']);
+    Route::put('/profile/documents/{id}', [ProfileController::class, 'updateDocument']);
     Route::delete('/profile/documents/{id}', [ProfileController::class, 'deleteDocument']);
     Route::post('/profile/declaration', [ProfileController::class, 'declare']);
     Route::post('/profile/change-requests', [ProfileController::class, 'submitChangeRequest']);

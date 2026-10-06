@@ -4,8 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
+use App\Models\Beneficiary;
 use App\Models\Child;
 use App\Models\EmergencyContact;
+use App\Models\Expertise;
+use App\Models\GeographicExperience;
+use App\Models\LanguageSkill;
 use App\Models\ProfileChangeRequest;
 use App\Models\Qualification;
 use App\Models\Spouse;
@@ -27,7 +31,10 @@ class ProfileController extends Controller
     /** Full profile payload for the wizard. */
     public function show(Request $request): JsonResponse
     {
-        $user = $request->user()->load(['qualifications', 'children', 'emergencyContacts', 'spouse', 'documents']);
+        $user = $request->user()->load([
+            'qualifications', 'children', 'emergencyContacts', 'spouse', 'documents',
+            'expertises', 'languageSkills', 'geographicExperiences', 'beneficiaries',
+        ]);
 
         $changes = $user->profileChangeRequests()->orderByDesc('created_at')->limit(30)->get();
 
@@ -54,6 +61,28 @@ class ProfileController extends Controller
                 'addr' => $e->addr,
             ]),
             'documents' => $user->documents->map(fn ($d) => $this->serializeDocument($d)),
+            'expertise' => $user->expertises->map(fn ($e) => [
+                'id' => $e->id,
+                'name' => $e->name,
+            ]),
+            'motherTongues' => $user->languageSkills->where('is_mother_tongue', true)->values()->map(fn ($l) => [
+                'id' => $l->id,
+                'language' => $l->language,
+            ]),
+            'languages' => $user->languageSkills->where('is_mother_tongue', false)->values()->map(fn ($l) => [
+                'id' => $l->id,
+                'language' => $l->language,
+                'reading' => $l->reading,
+                'writing' => $l->writing,
+                'speaking' => $l->speaking,
+                'understanding' => $l->understanding,
+            ]),
+            'geography' => $user->geographicExperiences->map(fn ($g) => [
+                'id' => $g->id,
+                'country' => $g->country,
+                'province' => $g->province,
+            ]),
+            'beneficiaries' => $user->beneficiaries->map(fn ($b) => $this->serializeBeneficiary($b)),
             'lockedFields' => self::LOCKED_FIELDS,
             'changeRequests' => $changes->map(fn (ProfileChangeRequest $r) => [
                 'id' => $r->id,
@@ -69,7 +98,7 @@ class ProfileController extends Controller
         ]);
     }
 
-    /** Step 1 — personal info. */
+    /** Tab 1 — personal info. */
     public function updatePersonal(Request $request): UserResource
     {
         $data = $request->validate([
@@ -77,21 +106,33 @@ class ProfileController extends Controller
             'lastName' => ['required', 'string', 'max:255'],
             'nameKh' => ['nullable', 'string', 'max:255'],
             'dob' => ['required', 'date'],
-            'gender' => ['required', 'in:Male,Female,Other'],
+            'gender' => ['required', 'in:Male,Female,Other,Non-binary,Prefer not to say'],
             'pob' => ['required', 'string', 'max:255'],
-            'nationality' => ['required', 'string', 'max:255'],
+            'nationality' => ['nullable', 'string', 'max:255'], // citizenship (if foreigner)
             'nid' => ['required', 'string', 'max:64'],
-            'marital' => ['required', 'in:Single,Married,Divorced,Widowed'],
             'phone' => ['required', 'string', 'max:32'],
+            'phoneAlt' => ['nullable', 'string', 'max:32'],
             'email' => ['required', 'email'],
-            'address' => ['required', 'string', 'max:1000'],
+            'emailAlt' => ['nullable', 'email', 'max:255'],
+            'addrHouse' => ['nullable', 'string', 'max:64'],
+            'addrStreet' => ['nullable', 'string', 'max:128'],
+            'addrVillage' => ['nullable', 'string', 'max:128'],
+            'addrCommune' => ['nullable', 'string', 'max:128'],
+            'addrDistrict' => ['nullable', 'string', 'max:128'],
+            'addrProvince' => ['nullable', 'string', 'max:128'],
+            'addrPostal' => ['nullable', 'string', 'max:16'],
+            // Marital is edited from the Family tab / change requests; accepted for legacy clients only.
+            'marital' => ['nullable', 'in:Single,Married,Divorced,Widowed'],
         ]);
 
         $map = [
             'firstName' => 'first_name', 'lastName' => 'last_name', 'nameKh' => 'name_kh',
             'dob' => 'dob', 'gender' => 'gender', 'pob' => 'pob', 'nationality' => 'nationality',
-            'nid' => 'nid', 'marital' => 'marital', 'phone' => 'phone', 'email' => 'email',
-            'address' => 'address',
+            'nid' => 'nid', 'phone' => 'phone', 'phoneAlt' => 'phone_alt', 'email' => 'email',
+            'emailAlt' => 'email_alt', 'addrHouse' => 'addr_house', 'addrStreet' => 'addr_street',
+            'addrVillage' => 'addr_village', 'addrCommune' => 'addr_commune',
+            'addrDistrict' => 'addr_district', 'addrProvince' => 'addr_province',
+            'addrPostal' => 'addr_postal',
         ];
 
         $payload = [];
@@ -99,8 +140,15 @@ class ProfileController extends Controller
             if (in_array($camel, self::LOCKED_FIELDS, true)) {
                 continue; // locked — only HR/Admin can change these
             }
-            $payload[$snake] = $data[$camel];
+            $payload[$snake] = $data[$camel] ?? null;
         }
+
+        // Keep the flat `address` column in sync for the rest of the app.
+        $payload['address'] = collect([
+            $data['addrHouse'] ?? null, $data['addrStreet'] ?? null, $data['addrVillage'] ?? null,
+            $data['addrCommune'] ?? null, $data['addrDistrict'] ?? null,
+            $data['addrProvince'] ?? null, $data['addrPostal'] ?? null,
+        ])->filter()->implode(', ');
 
         $request->user()->update($payload);
 
@@ -176,19 +224,19 @@ class ProfileController extends Controller
             'firstName' => 'First Name', 'lastName' => 'Last Name',
             'nameKh' => 'Name (Khmer)', 'dob' => 'Date of Birth',
             'gender' => 'Sex', 'pob' => 'Place of Birth',
-            'nationality' => 'Nationality', 'nid' => 'ID / Passport Number',
+            'nationality' => 'Citizenship', 'nid' => 'ID / Passport Number',
             'marital' => 'Marital Status', 'phone' => 'Phone Number',
             'email' => 'Email', 'address' => 'Current Address',
             default => \Illuminate\Support\Str::headline($field),
         };
     }
 
-    /** Step 2 — qualifications (replace-all sync). */
+    /** Tab 2 — education, training, employment history and memberships (replace-all sync). */
     public function saveQualifications(Request $request): JsonResponse
     {
         $data = $request->validate([
             'items' => ['required', 'array'],
-            'items.*.type' => ['required', 'in:education,experience'],
+            'items.*.type' => ['required', 'in:education,experience,training,membership'],
             'items.*.title' => ['required', 'string', 'max:255'],
             'items.*.institution' => ['required', 'string', 'max:255'],
             'items.*.field' => ['nullable', 'string', 'max:255'],
@@ -216,7 +264,65 @@ class ProfileController extends Controller
         return response()->json(['message' => 'Qualifications saved.']);
     }
 
-    /** Step 3 — family (spouse, children, emergency contacts). */
+    /** Tab 2 — expertise, mother tongues, language proficiency and geographic experience. */
+    public function saveSkills(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'expertise' => ['present', 'array'],
+            'expertise.*.name' => ['required', 'string', 'max:255'],
+            'motherTongues' => ['present', 'array'],
+            'motherTongues.*.language' => ['required', 'string', 'max:64'],
+            'languages' => ['present', 'array'],
+            'languages.*.language' => ['required', 'string', 'max:64'],
+            'languages.*.reading' => ['nullable', 'in:Fluent,Good,Fair,Basic'],
+            'languages.*.writing' => ['nullable', 'in:Fluent,Good,Fair,Basic'],
+            'languages.*.speaking' => ['nullable', 'in:Fluent,Good,Fair,Basic'],
+            'languages.*.understanding' => ['nullable', 'in:Fluent,Good,Fair,Basic'],
+            'geography' => ['present', 'array'],
+            'geography.*.country' => ['required', 'string', 'max:128'],
+            'geography.*.province' => ['nullable', 'string', 'max:128'],
+        ]);
+
+        $user = $request->user();
+
+        $user->expertises()->delete();
+        foreach ($data['expertise'] as $e) {
+            Expertise::create(['user_id' => $user->id, 'name' => $e['name']]);
+        }
+
+        $user->languageSkills()->delete();
+        foreach ($data['motherTongues'] as $l) {
+            LanguageSkill::create([
+                'user_id' => $user->id,
+                'language' => $l['language'],
+                'is_mother_tongue' => true,
+            ]);
+        }
+        foreach ($data['languages'] as $l) {
+            LanguageSkill::create([
+                'user_id' => $user->id,
+                'language' => $l['language'],
+                'is_mother_tongue' => false,
+                'reading' => $l['reading'] ?? null,
+                'writing' => $l['writing'] ?? null,
+                'speaking' => $l['speaking'] ?? null,
+                'understanding' => $l['understanding'] ?? null,
+            ]);
+        }
+
+        $user->geographicExperiences()->delete();
+        foreach ($data['geography'] as $g) {
+            GeographicExperience::create([
+                'user_id' => $user->id,
+                'country' => $g['country'],
+                'province' => $g['province'] ?? null,
+            ]);
+        }
+
+        return response()->json(['message' => 'Skills and qualifications saved.']);
+    }
+
+    /** Tab 3 — family (spouse, children, emergency contacts, beneficiaries). */
     public function saveFamily(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -233,7 +339,16 @@ class ProfileController extends Controller
             'emergencyContacts.*.name' => ['required', 'string', 'max:255'],
             'emergencyContacts.*.relationship' => ['required', 'string', 'max:255'],
             'emergencyContacts.*.phone' => ['required', 'string', 'max:32'],
+            'emergencyContacts.*.email' => ['nullable', 'email', 'max:255'],
             'emergencyContacts.*.addr' => ['nullable', 'string', 'max:500'],
+            'beneficiaries' => ['nullable', 'array'],
+            'beneficiaries.*.fullName' => ['required_with:beneficiaries', 'string', 'max:255'],
+            'beneficiaries.*.dob' => ['nullable', 'date'],
+            'beneficiaries.*.idNumber' => ['nullable', 'string', 'max:64'],
+            'beneficiaries.*.relationship' => ['nullable', 'string', 'max:255'],
+            'beneficiaries.*.contact' => ['nullable', 'string', 'max:32'],
+            'beneficiaries.*.address' => ['nullable', 'string', 'max:500'],
+            'beneficiaries.*.share' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         $user = $request->user();
@@ -266,25 +381,44 @@ class ProfileController extends Controller
                 'name' => $e['name'],
                 'relationship' => $e['relationship'],
                 'phone' => $e['phone'],
+                'email' => $e['email'] ?? null,
                 'addr' => $e['addr'] ?? null,
+            ]);
+        }
+
+        $user->beneficiaries()->delete();
+        foreach ($data['beneficiaries'] ?? [] as $b) {
+            Beneficiary::create([
+                'user_id' => $user->id,
+                'full_name' => $b['fullName'],
+                'dob' => $b['dob'] ?? null,
+                'id_number' => $b['idNumber'] ?? null,
+                'relationship' => $b['relationship'] ?? null,
+                'contact' => $b['contact'] ?? null,
+                'address' => $b['address'] ?? null,
+                'share' => $b['share'] ?? 0,
             ]);
         }
 
         return response()->json(['message' => 'Family information saved.']);
     }
 
-    /** Step 4 — upload a supporting document. */
+    /** Tab 4 — upload a supporting document (PDF, JPG or PNG). */
     public function uploadDocument(Request $request): JsonResponse
     {
         $request->validate([
             'type' => ['required', 'string', 'max:255'],
-            'file' => ['required', 'file', 'max:10240'],
+            'description' => ['nullable', 'string', 'max:1000'],
+            'remark' => ['nullable', 'string', 'max:1000'],
+            'file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
         $path = $request->file('file')->store('documents', 'public');
 
         $doc = $request->user()->documents()->create([
             'type' => $request->input('type'),
+            'description' => $request->input('description'),
+            'remark' => $request->input('remark'),
             'file_path' => $path,
             'original_name' => $request->file('file')->getClientOriginalName(),
             'status' => 'Pending',
@@ -302,23 +436,49 @@ class ProfileController extends Controller
         ], 201);
     }
 
-    /** Step 5 — submit declaration with signature. */
-    public function declare(Request $request): JsonResponse
+    /** Edit a document's title, description or remark. */
+    public function updateDocument(Request $request, int $id): JsonResponse
     {
         $data = $request->validate([
-            'signature' => ['required', 'string'], // data URL
+            'type' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:1000'],
+            'remark' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $path = $this->storeDataUrl($data['signature'], 'signatures/declaration');
+        $doc = $request->user()->documents()->findOrFail($id);
+        $doc->update($data);
 
-        $request->user()->update(['signature_path' => $path]);
+        return response()->json([
+            'message' => 'Document updated.',
+            'document' => $this->serializeDocument($doc->fresh()),
+        ]);
+    }
 
-        $request->user()->activities()->create([
+    /** Tab 4 — free-form notes to the organization. */
+    public function saveNotes(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'notes' => ['nullable', 'string', 'max:5000'],
+        ]);
+
+        $request->user()->update(['notes_to_org' => $data['notes'] ?? null]);
+
+        return response()->json(['message' => 'Notes saved.']);
+    }
+
+    /** Tab 5 — submit the declaration. */
+    public function declare(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $user->update(['declaration_accepted_at' => now()]);
+
+        $user->activities()->create([
             'icon' => 'profile',
             'message' => 'You submitted your personnel declaration',
         ]);
 
-        return response()->json(['message' => 'Declaration submitted.']);
+        return response()->json(['message' => 'Declaration submitted. Thank you.']);
     }
 
     /** Upload or replace the profile photo (shown as the avatar). */
@@ -375,17 +535,6 @@ class ProfileController extends Controller
         return response()->json(['message' => 'Document deleted.']);
     }
 
-    private function storeDataUrl(string $dataUrl, string $prefix): string
-    {
-        [$meta, $content] = explode(',', $dataUrl, 2);
-        $extension = str_contains($meta, 'image/jpeg') ? 'jpg' : 'png';
-        $path = "{$prefix}-".now()->format('YmdHis').'-'.uniqid().".{$extension}";
-
-        Storage::disk('public')->put($path, base64_decode($content));
-
-        return $path;
-    }
-
     private function serializeQualification(Qualification $q): array
     {
         return [
@@ -405,9 +554,26 @@ class ProfileController extends Controller
         return [
             'id' => $d->id,
             'type' => $d->type,
+            'description' => $d->description,
+            'remark' => $d->remark,
             'originalName' => $d->original_name,
             'status' => $d->status,
             'url' => '/storage/'.$d->file_path,
+            'uploadedAt' => $d->created_at?->toISOString(),
+        ];
+    }
+
+    private function serializeBeneficiary(Beneficiary $b): array
+    {
+        return [
+            'id' => $b->id,
+            'fullName' => $b->full_name,
+            'dob' => $b->dob?->toDateString(),
+            'idNumber' => $b->id_number,
+            'relationship' => $b->relationship,
+            'contact' => $b->contact,
+            'address' => $b->address,
+            'share' => $b->share !== null ? (float) $b->share : null,
         ];
     }
 }

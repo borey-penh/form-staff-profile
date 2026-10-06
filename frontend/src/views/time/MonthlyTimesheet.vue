@@ -20,7 +20,12 @@ const submitting = ref(false)
 const loading = ref(true)
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
-const LEAVE_TYPES = ['Annual', 'Sick', 'Special', 'Compassionate', 'Time in Lieu', 'Paternity', 'Unpaid', 'Study']
+const LEAVE_TYPES = ['Annual', 'Sick Leave', 'Special', 'Compassionate', 'Time in Lieu', 'Paternity', 'Unpaid', 'Study']
+// Keep values already saved on old timesheets selectable when editing them.
+const leaveTypeOptions = computed(() => {
+  const legacy = [...new Set(entries.value.filter((e) => e.leave && !LEAVE_TYPES.includes(e.leave)).map((e) => e.leave))]
+  return [...LEAVE_TYPES, ...legacy]
+})
 
 const holidayMap = ref({})   // 'YYYY-MM-DD' → name
 const balances = ref([])
@@ -228,7 +233,7 @@ async function submit() {
               <td v-for="e in entries" :key="'lv' + e.iso" :class="colClass(e)">
                 <select v-model="e.leave" :disabled="isNonWorking(e)" :title="`Leave for ${e.date}`">
                   <option value="">–</option>
-                  <option v-for="t in LEAVE_TYPES" :key="t" :value="t">{{ t }}</option>
+                  <option v-for="t in leaveTypeOptions" :key="t" :value="t">{{ t }}</option>
                 </select>
               </td>
             </tr>

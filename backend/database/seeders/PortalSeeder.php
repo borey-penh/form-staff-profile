@@ -174,8 +174,8 @@ class PortalSeeder extends Seeder
 
         /* ---- Leave balances ---- */
         LeaveBalance::create(['user_id' => $staff->id, 'type' => 'Annual', 'entitled' => 15, 'used' => 3]);
-        LeaveBalance::create(['user_id' => $staff->id, 'type' => 'Sick', 'entitled' => 10, 'used' => 5]);
-        LeaveBalance::create(['user_id' => $staff->id, 'type' => 'Other', 'entitled' => 5, 'used' => 2]);
+        LeaveBalance::create(['user_id' => $staff->id, 'type' => 'Sick Leave', 'entitled' => 10, 'used' => 5]);
+        LeaveBalance::create(['user_id' => $staff->id, 'type' => 'Time in Lieu', 'entitled' => 5, 'used' => 2]);
 
         /* ---- Reference vehicle ---- */
         \App\Models\Vehicle::create(['name' => 'Car-001']);

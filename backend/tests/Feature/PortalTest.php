@@ -604,4 +604,139 @@ class PortalTest extends TestCase
         $this->assertSame(0, $res2->json('pendingApprovalsCount'));
         $this->assertSame([], $res2->json('pendingApprovals'));
     }
+
+    public function test_personnel_profile_tabs_save_end_to_end(): void
+    {
+        Storage::fake('public');
+
+        $staff = $this->makeUser('staff');
+        $token = $staff->createToken('t')->plainTextToken;
+
+        // Tab 1 — personal info with the new fields
+        $this->req('put', '/api/profile/personal', [
+            'firstName' => 'Borey', 'lastName' => 'Penh', 'dob' => '1992-08-15',
+            'gender' => 'Non-binary', 'pob' => 'Phnom Penh', 'nationality' => 'Cambodia',
+            'nid' => '010892415', 'phone' => '012345678', 'phoneAlt' => '092111222',
+            'email' => $staff->email, 'emailAlt' => 'borey@home.test',
+            'addrHouse' => '#42B', 'addrStreet' => 'St. 310', 'addrVillage' => 'Boeng Keng Kang',
+            'addrCommune' => 'Boeng Keng Kang I', 'addrDistrict' => 'Chamkarmon',
+            'addrProvince' => 'Phnom Penh', 'addrPostal' => '12310',
+        ], $token)->assertOk();
+
+        $staff->refresh();
+        $this->assertSame('092111222', $staff->phone_alt);
+        $this->assertSame('borey@home.test', $staff->email_alt);
+        $this->assertSame('Chamkarmon', $staff->addr_district);
+
+        // Flat address kept in sync for the rest of the app
+        $this->assertSame(
+            '#42B, St. 310, Boeng Keng Kang, Boeng Keng Kang I, Chamkarmon, Phnom Penh, 12310',
+            $staff->address
+        );
+
+        // Tab 2 — all four qualification types + skills
+        $this->req('put', '/api/profile/qualifications', [
+            'items' => [
+                ['type' => 'education', 'title' => 'Bachelor Degree', 'institution' => 'RUPP', 'field' => 'Computer Science'],
+                ['type' => 'training', 'title' => 'First Aid', 'institution' => 'Red Cross'],
+                ['type' => 'experience', 'title' => 'Officer', 'institution' => 'NGO X', 'field' => 'Project A'],
+                ['type' => 'membership', 'title' => 'Member', 'institution' => 'IT Association'],
+            ],
+        ], $token)->assertOk();
+
+        $skills = [
+            'expertise' => [['name' => 'Community facilitation']],
+            'motherTongues' => [['language' => 'Khmer']],
+            'languages' => [['language' => 'English', 'reading' => 'Fluent', 'writing' => 'Good', 'speaking' => 'Good', 'understanding' => 'Fluent']],
+            'geography' => [['country' => 'Cambodia', 'province' => 'Siem Reap']],
+        ];
+
+        // Sent twice — replace-all sync must not duplicate rows
+        $this->req('put', '/api/profile/skills', $skills, $token)->assertOk();
+        $this->req('put', '/api/profile/skills', $skills, $token)->assertOk();
+
+        $this->assertDatabaseCount('expertises', 1);
+        $this->assertDatabaseCount('language_skills', 2); // 1 mother tongue + 1 foreign
+        $this->assertDatabaseCount('geographic_experiences', 1);
+        $this->assertDatabaseCount('qualifications', 4);
+        $this->assertDatabaseHas('qualifications', ['type' => 'training', 'title' => 'First Aid']);
+
+        // Tab 3 — family with emergency email and beneficiaries
+        $this->req('put', '/api/profile/family', [
+            'spouse' => ['name' => 'Chanly Chea'],
+            'children' => [['name' => 'Baby Penh', 'dob' => '2020-05-01', 'gender' => 'Female']],
+            'emergencyContacts' => [[
+                'name' => 'Rathana Meng', 'relationship' => 'Father',
+                'phone' => '016772390', 'email' => 'rathana@home.test', 'addr' => 'Phnom Penh',
+            ]],
+            'beneficiaries' => [
+                ['fullName' => 'Chanly Chea', 'dob' => '1993-03-10', 'idNumber' => 'BC-001',
+                 'relationship' => 'Spouse', 'contact' => '012999888', 'address' => 'Phnom Penh', 'share' => 60],
+                ['fullName' => 'Baby Penh', 'relationship' => 'Daughter', 'share' => 40],
+            ],
+        ], $token)->assertOk();
+
+        $this->assertDatabaseHas('emergency_contacts', ['email' => 'rathana@home.test']);
+        $this->assertDatabaseCount('beneficiaries', 2);
+        $this->assertDatabaseHas('beneficiaries', ['full_name' => 'Chanly Chea', 'share' => 60]);
+
+        // Tab 4 — notes + document upload/edit with meta, and format restriction
+        $this->req('put', '/api/profile/notes', ['notes' => 'Please contact me via email.'], $token)->assertOk();
+        $this->assertDatabaseHas('users', ['id' => $staff->id, 'notes_to_org' => 'Please contact me via email.']);
+
+        $pdf = UploadedFile::fake()->createWithContent('certificate.pdf', '%PDF-1.4 fake');
+        $this->post('/api/profile/documents', [
+            'type' => 'My certificate', 'description' => 'Bachelor certificate', 'remark' => 'Original', 'file' => $pdf,
+        ], ['Authorization' => "Bearer {$token}"])->assertCreated();
+
+        auth()->forgetGuards();
+
+        // Only PDF, JPG and PNG are accepted per the form spec
+        $bad = UploadedFile::fake()->createWithContent('notes.txt', 'hello');
+        $this->post('/api/profile/documents', ['type' => 'Notes', 'file' => $bad], [
+            'Authorization' => "Bearer {$token}", 'Accept' => 'application/json',
+        ])->assertStatus(422);
+
+        auth()->forgetGuards();
+
+        $this->req('put', '/api/profile/documents/1', [
+            'type' => 'My certificate (renewed)', 'description' => 'Bachelor certificate', 'remark' => 'Copy submitted',
+        ], $token)->assertOk();
+        $this->assertDatabaseHas('documents', ['id' => 1, 'type' => 'My certificate (renewed)', 'remark' => 'Copy submitted']);
+
+        // GET /profile exposes every tab's data
+        $res = $this->req('get', '/api/profile', token: $token)->assertOk();
+        foreach (['qualifications', 'expertise', 'motherTongues', 'languages', 'geography', 'beneficiaries', 'documents'] as $key) {
+            $this->assertArrayHasKey($key, $res->json());
+        }
+        $this->assertSame('Khmer', $res->json('motherTongues.0.language'));
+        $this->assertEqualsWithDelta(60.0, $res->json('beneficiaries.0.share'), 0.001);
+
+        // Tab 5 — declaration submits without a signature
+        $this->req('post', '/api/profile/declaration', [], $token)->assertOk();
+        $this->assertNotNull($staff->refresh()->declaration_accepted_at);
+    }
+
+    public function test_leave_accepts_the_new_leave_types(): void
+    {
+        $staff = $this->makeUser('staff');
+        $token = $staff->createToken('t')->plainTextToken;
+
+        $newTypes = ['Sick Leave', 'Special', 'Compassionate', 'Time in Lieu', 'Paternity', 'Study'];
+        foreach ($newTypes as $i => $leaveType) {
+            $day = sprintf('2026-11-%02d', $i + 2);
+
+            $this->req('post', '/api/requests', [
+                'type' => 'Leave',
+                'data' => ['type' => $leaveType, 'startDate' => $day, 'endDate' => $day],
+            ], $token)->assertCreated();
+
+            $this->assertDatabaseHas('leaves', ['type' => $leaveType, 'days' => 1]);
+        }
+
+        // Balance rows using the new type names are served by the API
+        \App\Models\LeaveBalance::create(['user_id' => $staff->id, 'type' => 'Time in Lieu', 'entitled' => 5, 'used' => 1]);
+        $res = $this->req('get', '/api/leave-balances', token: $staff->createToken('t2')->plainTextToken)->assertOk();
+        $this->assertContains('Time in Lieu', collect($res->json('data'))->pluck('type')->all());
+    }
 }

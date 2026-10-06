@@ -16,6 +16,14 @@ const submitting = ref(false)
 const attachment = ref(null)
 const fileInput = ref(null)
 
+const leaveTypes = ['Annual', 'Sick Leave', 'Special', 'Compassionate', 'Time in Lieu', 'Paternity', 'Unpaid', 'Study']
+// Keep legacy types selectable when an old request is opened for editing.
+const leaveTypeOptions = computed(() =>
+  form.value.type && !leaveTypes.includes(form.value.type)
+    ? [...leaveTypes, form.value.type]
+    : leaveTypes
+)
+
 function clearAttachment() {
   attachment.value = null
   if (fileInput.value) fileInput.value.value = ''
@@ -75,7 +83,7 @@ async function submit() {
         <div class="field">
           <label>Leave Type <span class="req">*</span></label>
           <select v-model="form.type">
-            <option>Annual</option><option>Sick</option><option>Unpaid</option><option>Maternity</option><option>Other</option>
+            <option v-for="t in leaveTypeOptions" :key="t" :value="t">{{ t }}</option>
           </select>
         </div>
         <div class="row2">

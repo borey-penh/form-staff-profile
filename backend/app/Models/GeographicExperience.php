@@ -4,9 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class EmergencyContact extends Model
+class GeographicExperience extends Model
 {
-    protected $fillable = ['user_id', 'name', 'relationship', 'phone', 'email', 'addr'];
+    protected $fillable = ['user_id', 'country', 'province'];
 
     public function user()
     {

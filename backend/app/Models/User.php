@@ -12,7 +12,10 @@ class User extends Authenticatable
 
     protected $fillable = [
         'staff_id', 'first_name', 'last_name', 'name_kh', 'email', 'password',
-        'role', 'role_id', 'status', 'position', 'department_id', 'phone', 'address',
+        'role', 'role_id', 'status', 'position', 'department_id', 'phone', 'phone_alt',
+        'email_alt', 'address', 'addr_house', 'addr_street', 'addr_village',
+        'addr_commune', 'addr_district', 'addr_province', 'addr_postal',
+        'notes_to_org', 'declaration_accepted_at',
         'photo_path', 'signature_path', 'dob', 'gender', 'pob',
         'nationality', 'nid', 'marital',
     ];
@@ -21,6 +24,7 @@ class User extends Authenticatable
 
     protected $casts = [
         'dob' => 'date',
+        'declaration_accepted_at' => 'datetime',
         'password' => 'hashed',
     ];
 
@@ -125,6 +129,26 @@ class User extends Authenticatable
     public function documents()
     {
         return $this->hasMany(Document::class);
+    }
+
+    public function expertises()
+    {
+        return $this->hasMany(Expertise::class);
+    }
+
+    public function languageSkills()
+    {
+        return $this->hasMany(LanguageSkill::class);
+    }
+
+    public function geographicExperiences()
+    {
+        return $this->hasMany(GeographicExperience::class);
+    }
+
+    public function beneficiaries()
+    {
+        return $this->hasMany(Beneficiary::class);
     }
 
     public function contracts()
